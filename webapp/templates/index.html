@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Онлайн-деканат</title>
+    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar">
+            <a class="brand" href="/" aria-label="Онлайн-деканат">
+                <span class="brand-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h4M10 12h5m-5 4h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+                <span>Онлайн<span class="brand-subtitle">деканат</span></span>
+            </a>
+            <span class="nav-label">ОБРАЩЕНИЯ</span>
+            <nav class="main-nav" aria-label="Сценарии обращения">
+                {% for mode, label in modes.items() %}
+                <button class="nav-button" type="button" data-mode="{{ mode }}">{{ label }}</button>
+                {% endfor %}
+            </nav>
+            <div class="sidebar-note">
+                <span class="sidebar-note-icon">✉</span>
+                <strong>Деканат на связи</strong>
+                <p>Вопросы, документы и ответы — в одном месте.</p>
+            </div>
+            <div class="sidebar-footer"><span class="status-dot"></span> Личный кабинет студента</div>
+        </aside>
+
+        <div class="main-area">
+            <header class="topbar">
+                <span class="topbar-label">Личный кабинет <span>/</span> Деканат</span>
+                <div class="profile">
+                    <button class="profile-button" id="profile-button" type="button" aria-label="Профиль пользователя" aria-expanded="false">
+                        <span id="profile-name">Профиль</span>
+                        <span class="avatar" id="avatar">
+                            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M5 21v-2a7 7 0 0 1 14 0v2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                        </span>
+                    </button>
+                    <div class="profile-popover" id="profile-popover" hidden>
+                        <span>Аккаунт Telegram</span>
+                        <strong id="profile-detail"></strong>
+                        <button id="logout" type="button">Выйти</button>
+                    </div>
+                </div>
+            </header>
+
+            <main class="content">
+                <div class="page-heading">
+                    <div><span class="eyebrow">ОНЛАЙН-ДЕКАНАТ</span><h1 id="page-title">Вопрос деканату</h1><p id="page-description">Напиши свой вопрос. Ответ преподавателя появится здесь, в чате.</p></div>
+                    <span class="page-badge"><span class="status-dot"></span> Вход через Telegram</span>
+                </div>
+
+                <div class="workspace is-question" id="workspace">
+                    <section class="card request-card" aria-labelledby="request-heading">
+                        <div class="card-heading"><span class="step-number">01</span><h2 id="request-heading">Твоё обращение</h2></div>
+                        <form id="request-form">
+                            <div class="field" id="document-type-field" hidden>
+                                <label for="document-type">Тип документа</label>
+                                <select id="document-type" name="application_type">
+                                    {% for name in application_questions %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                                </select>
+                                <span id="application-only" hidden>{{ applications[0] }}</span>
+                            </div>
+                            <div class="field" id="upload-field" hidden>
+                                <label class="field-label" for="document">Фото документа</label>
+                                <label class="dropzone" id="dropzone" for="document">
+                                    <span class="upload-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v4h16v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+                                    <strong id="upload-title">Перетащи фото сюда</strong><span id="upload-caption">или выбери с компьютера</span><span class="file-formats">JPG, PNG · до 10 МБ</span>
+                                    <input class="visually-hidden" id="document" type="file" accept="image/jpeg,image/png">
+                                </label>
+                                <button class="text-button remove-file" id="remove-file" type="button" hidden>Убрать фото</button>
+                            </div>
+                            <div class="field" id="question-field">
+                                <label for="question">Твой вопрос</label>
+                                <textarea id="question" name="text" rows="7" maxlength="4096" placeholder="Например: когда можно забрать справку об обучении?"></textarea>
+                            </div>
+                            <p class="form-error" id="form-error" role="alert" hidden></p>
+                            <button class="primary-button" id="send-request" type="submit">✉ Отправить вопрос</button>
+                            <p class="form-hint" id="form-hint">Ответ придёт в этот чат. Можно вернуться на страницу позже.</p>
+                        </form>
+                        <div class="request-tip"><span>💡</span><p id="request-tip">Опиши ситуацию и укажи детали, которые помогут деканату ответить.</p></div>
+                    </section>
+
+                    <section class="card preview-card" id="preview-card" aria-labelledby="preview-heading" hidden>
+                        <div class="card-heading"><span class="step-number">02</span><h2 id="preview-heading">Документ</h2><div class="zoom-controls"><button type="button" id="zoom-out" aria-label="Уменьшить фото">−</button><span id="zoom-value">100%</span><button type="button" id="zoom-in" aria-label="Увеличить фото">+</button></div></div>
+                        <div class="document-preview" id="document-preview">
+                            <div class="preview-empty" id="preview-empty"><svg viewBox="0 0 64 72" fill="none" aria-hidden="true"><path d="M12 2h28l12 12v56H12V2Z" fill="white" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M40 2v14h12M22 30h20M22 40h20M22 50h13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><strong>Здесь будет твоё фото</strong><span>Выбери документ, чтобы посмотреть его перед отправкой.</span></div>
+                            <img id="preview-image" alt="Предпросмотр документа" hidden>
+                        </div>
+                        <div class="recognition"><div class="recognition-heading"><h3>Текст с фото</h3><span id="ocr-status">Распознавание</span></div><pre id="recognized-text">После отправки здесь появится распознанный текст документа.</pre></div>
+                    </section>
+
+                    <section class="card chat-card" aria-labelledby="chat-heading">
+                        <div class="card-heading"><span class="step-number chat-step">02</span><h2 id="chat-heading">Чат с деканатом</h2><span class="chat-badge" id="chat-status">Ответы здесь</span></div>
+                        <div class="chat-messages" id="chat-messages" role="log" aria-label="Переписка с деканатом" aria-live="polite">
+                            <div class="chat-empty" id="chat-empty"><span class="chat-empty-icon"><svg viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M6 6h20v15H14l-8 5V6Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M11 12h10m-10 4h6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></span><h3>Начнём с твоего вопроса</h3><p>Отправь обращение слева.<br>Здесь будут твои сообщения<br>и ответы преподавателей.</p></div>
+                        </div>
+                        <div class="chat-footer"><span class="status-dot"></span><span id="connection-status">Подключаемся к чату…</span></div>
+                    </section>
+                </div>
+                <p class="page-footer">Онлайн-деканат <span>·</span> Всё важное для учёбы — рядом.</p>
+            </main>
+        </div>
+    </div>
+    <dialog id="photo-dialog"><button class="dialog-close" type="button" id="close-photo" aria-label="Закрыть фото">×</button><img id="dialog-photo" alt="Фото отправленного документа"></dialog>
+</body>
+</html>
