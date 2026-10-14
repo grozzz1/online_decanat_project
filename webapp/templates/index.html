@@ -60,9 +60,8 @@
                             <div class="field" id="document-type-field" hidden>
                                 <label for="document-type">Тип документа</label>
                                 <select id="document-type" name="application_type">
-                                    {% for name in application_questions %}<option value="{{ name }}">{{ name }}</option>{% endfor %}
+                                    {% for key, schema in document_schemas.items() %}<option value="{{ key }}" data-application-visible="{{ 'false' if key == 'study_certificate' else 'true' }}"{% if key == 'academic_leave_application' %} selected{% endif %}>{{ schema.label }}</option>{% endfor %}
                                 </select>
-                                <span id="application-only" hidden>{{ applications[0] }}</span>
                             </div>
                             <div class="field" id="upload-field" hidden>
                                 <label class="field-label" for="document">Документ</label>
@@ -96,6 +95,27 @@
                             <a id="original-document" hidden>Открыть оригинал</a>
                         </div>
                         <div class="visual-results" id="visual-results" aria-live="polite">Анализ печатей и подписей появится после отправки.</div>
+                        <details class="field-card" id="field-card" hidden>
+                            <summary>Извлечённые поля и источники</summary>
+                            <dl id="field-results"></dl>
+                        </details>
+                        <div class="ai-panel" id="ai-panel" hidden>
+                            <label for="ai-question">Вопрос AI-помощнику по этому документу</label>
+                            <textarea id="ai-question" rows="2" maxlength="2000" placeholder="Например: какого реквизита не хватает?"></textarea>
+                            <button type="button" class="primary-button" id="ask-ai">Получить ответ</button>
+                            <p id="ai-status" role="status" aria-live="polite"></p>
+                            <div id="ai-answer"></div>
+                        </div>
+                        <div class="document-type-result" id="document-title" hidden></div>
+                        <div class="type-notice" id="type-notice" role="status" aria-live="polite" hidden>
+                            <p id="type-notice-text"></p>
+                            <button type="button" class="warning-button" id="override-document-type">Подтвердить выбранный тип</button>
+                            <button class="text-button" type="button" id="change-document-type">Изменить тип</button>
+                        </div>
+                        <div class="review-actions" id="review-actions" hidden>
+                            <p id="type-change-hint">Файл сохранён. Проверь тип перед отправкой.</p>
+                            <button type="button" class="primary-button" id="confirm-document">Подтвердить и отправить</button>
+                        </div>
                         <div class="recognition"><div class="recognition-heading"><h3>Текст с фото</h3><span id="ocr-status">Распознавание</span></div><pre id="recognized-text">После отправки здесь появится распознанный текст документа.</pre></div>
                     </section>
 

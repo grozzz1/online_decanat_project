@@ -58,6 +58,69 @@ def encoded(image, format="PNG"):
 
 
 class VisualTests(unittest.TestCase):
+    def test_signature_bounds_include_separate_strokes_without_blank_rule_or_label(self):
+        image, words = page(signature=True)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((65, 850, 300, 880), fill="white")
+        draw.text((70, 900), "Подпись студента", font=FONT, fill="black")
+        words = [{**word, "bbox": [word["bbox"][0], word["bbox"][1] + 50,
+                                   word["bbox"][2], word["bbox"][3] + 50]} for word in words]
+        draw.line((60, 820, 700, 820), fill="gray", width=1)
+        # Detached side stroke, ascender and descender with gaps from the main body.
+        draw.line([(284, 814), (290, 782), (296, 819)], fill=(15, 40, 130), width=3)
+        draw.line([(145, 844), (150, 856)], fill=(15, 40, 130), width=3)
+        draw.line([(340, 775), (355, 780)], fill="black", width=3)  # Unrelated nearby note.
+        result = analyze_document_visuals(image, words)
+        x1, y1, x2, y2 = result["student_signature"]["bbox"]
+        self.assertLessEqual(x1, 110)
+        self.assertLessEqual(y1, 782)
+        self.assertGreaterEqual(x2, 297)
+        self.assertGreaterEqual(y2, 857)
+        self.assertGreater(x1, 70)
+        self.assertLess(x2, 340)
+        self.assertLess(y2, 900)  # Printed label must remain outside the box.
+
+    def test_signature_original_scale_covers_full_handwriting(self):
+        image, words = page(signature=True)
+        for factor in (1, 3):
+            scaled_words = [{**word, "bbox": [v * factor for v in word["bbox"]]} for word in words]
+            result = analyze_document_visuals(image.resize((800 * factor, 1100 * factor)), scaled_words)
+            box = result["student_signature"]["bbox"]
+            self.assertLessEqual(box[0], 110 * factor)
+            self.assertLessEqual(box[1], 790 * factor)
+            self.assertGreaterEqual(box[2], 280 * factor)
+            self.assertGreaterEqual(box[3], 840 * factor)
+
+    def test_blank_signature_field_is_not_a_signature(self):
+        image, words = page(signature=True)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((100, 775, 300, 845), fill="white")
+        draw.line((320, 870, 700, 870), fill="gray", width=1)
+        self.assertFalse(analyze_document_visuals(image, words)["signature"]["detected"])
+
+    def test_ocr_word_inside_a_crossing_handwriting_stroke_is_not_erased(self):
+        image, words = page(signature=True)
+        words.append({"text": "lll", "confidence": 80, "bbox": [160, 805, 240, 825], "line": [9, 1, 1]})
+        result = analyze_document_visuals(image, words)
+        box = result["student_signature"]["bbox"]
+        self.assertLessEqual(box[0], 110)
+        self.assertGreaterEqual(box[2], 280)
+
+    def test_explicit_specimen_is_not_a_confirmed_student_signature(self):
+        image, words = page(signature=True)
+        words.insert(0, {"text": "Образец", "confidence": 95, "bbox": [5, 850, 65, 874], "line": [1, 1, 1]})
+        result = analyze_document_visuals(image, words)
+        self.assertNotEqual(result["student_signature"]["status"], "detected")
+
+    def test_handwriting_cut_by_page_boundary_is_uncertain(self):
+        image, words = page(signature=True)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((100, 775, 300, 845), fill="white")
+        draw_signature(draw, -5, 790)
+        result = analyze_document_visuals(image, words)
+        self.assertEqual(result["signature"]["bbox"][0], 0)
+        self.assertEqual(result["signature"]["status"], "uncertain")
+
     def test_stamp_and_student_signature(self):
         image, words = page(stamp=True, signature=True)
         result = analyze_document_visuals(image, words)

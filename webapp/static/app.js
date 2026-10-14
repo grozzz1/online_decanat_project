@@ -1,11 +1,13 @@
 const $ = (id) => document.getElementById(id);
 const navButtons = Array.from(document.querySelectorAll("[data-mode]"));
+const allDocumentTypes = Array.from($("document-type").options, (option) => ({
+    value: option.value, label: option.textContent, applicationVisible: option.dataset.applicationVisible !== "false",
+}));
 const descriptions = {
     question: ["Вопрос деканату", "Напиши свой вопрос. Ответ преподавателя появится здесь, в чате."],
-    application: ["Отправка заявления", "Прикрепи заявление в формате JPG, PNG или PDF и отправь его в деканат."],
+    application: ["Отправка заявления", "Выбери тип документа, прикрепи JPG, PNG или PDF и отправь его в деканат."],
     application_question: ["Вопрос по заявлению", "Выбери документ, прикрепи файл и напиши, что хочешь уточнить."],
 };
-const documentTypes = Array.from($("document-type").options, (option) => option.value);
 let mode = "question";
 let csrf = "";
 let selectedFile = null;
@@ -22,6 +24,19 @@ let previewPage = 1;
 let displayedRequest = null;
 let requestsById = new Map();
 let viewerPinned = false;
+let reviewRequestId = null;
+let editingType = false;
+let actionInFlight = false;
+let aiSubmitting = false;
+const fieldLabels = {
+    student_name: "ФИО студента", university: "Название вуза", program: "Направление подготовки",
+    study_form: "Форма обучения", study_start: "Начало обучения", study_end: "Окончание обучения",
+    document_number: "Номер документа", issue_date: "Дата выдачи", signature: "Подпись", stamp: "Печать",
+    group: "Учебная группа", course: "Курс", leave_reason: "Причина отпуска", leave_start: "Начало отпуска",
+    leave_end: "Окончание отпуска", application_date: "Дата заявления", student_signature: "Подпись студента",
+    organization: "Организация", internship_start: "Начало практики", internship_end: "Окончание практики",
+    supervisor_name: "ФИО руководителя", grade: "Оценка",
+};
 
 function showError(text) {
     $("form-error").textContent = text;
@@ -43,17 +58,27 @@ async function api(path, options = {}) {
 
 function setBusy(value) {
     busy = value;
-    $("send-request").disabled = value;
+    const review = requestsById.get(reviewRequestId);
+    const mismatch = review?.document_type_matches_selection === false && !review.type_mismatch_confirmed;
+    $("send-request").disabled = value || (mode !== "question" && mismatch && !editingType);
+    navButtons.forEach((button) => { button.disabled = value; });
     $("question").disabled = value;
     $("document").disabled = value;
-    $("document-type").disabled = value;
+    $("document-type").disabled = value || review?.status === "failed";
     $("remove-file").disabled = value;
+    $("override-document-type").disabled = value;
+    $("override-document-type").textContent = value ? "Отправляем…" : "Подтвердить выбранный тип";
+    $("confirm-document").disabled = value || (mismatch && !editingType);
     $("send-request").textContent = value ? "Отправляем…" : mode === "application" ? "📝 Отправить заявление" : "✉ Отправить вопрос";
 }
 
 function setMode(value, audit = true) {
     if (!descriptions[value]) return;
     mode = value;
+    const selectedType = $("document-type").value;
+    const types = allDocumentTypes.filter((item) => mode !== "application" || item.applicationVisible);
+    $("document-type").replaceChildren(...types.map((item) => new Option(item.label, item.value)));
+    $("document-type").value = types.some((item) => item.value === selectedType) ? selectedType : "academic_leave_application";
     sessionStorage.setItem("decanat-mode", mode);
     const isQuestion = mode === "question";
     $("workspace").classList.toggle("is-question", isQuestion);
@@ -72,8 +97,6 @@ function setMode(value, audit = true) {
         button.classList.toggle("active", active);
         button.setAttribute("aria-pressed", String(active));
     });
-    const types = mode === "application" ? [$("application-only").textContent] : documentTypes;
-    $("document-type").replaceChildren(...types.map((name) => new Option(name, name)));
     showError("");
     setBusy(busy);
     if (audit) api("/api/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) }).catch((error) => showError(error.message));
@@ -125,7 +148,7 @@ function drawOverlay() {
     }
 }
 
-function showVisualResults(visuals) {
+function showVisualResults(visuals, documentType = "academic_leave_application") {
     const target = $("visual-results");
     target.replaceChildren();
     if (!visuals) {
@@ -136,7 +159,8 @@ function showVisualResults(visuals) {
     const unavailable = visuals.pages.some((page) => page.analysis_status === "unavailable");
     summary.textContent = unavailable ? "Визуальный анализ выполнен не для всех страниц." : "Визуальный анализ завершён.";
     const list = document.createElement("ul");
-    for (const [key, label] of [["stamp", "Печать"], ["student_signature", "Подпись студента"]]) {
+    const signatureField = documentType === "academic_leave_application" ? ["student_signature", "Подпись студента"] : ["signature", "Подпись"];
+    for (const [key, label] of [["stamp", "Печать"], signatureField]) {
         const entry = document.createElement("li");
         const result = visuals[key];
         entry.textContent = `${label}: ${result.detected ? result.status === "uncertain" ? "сомнительный кандидат" : "найдены визуальные признаки" : result.status === "unknown" ? "не удалось определить" : "не обнаружена алгоритмом"}.`;
@@ -192,8 +216,101 @@ function showDocument(item) {
     $("recognized-text").textContent = item.recognized || (item.status === "processing" ? "Распознаём текст документа…" : item.status === "failed" ? "Не удалось обработать документ. Попробуй отправить его ещё раз." : "Не удалось распознать текст.");
     $("recognized-text").classList.toggle("has-text", Boolean(item.recognized));
     $("ocr-status").textContent = item.status === "processing" ? "В процессе" : item.status === "failed" ? "Ошибка" : "Готово";
-    showVisualResults(currentVisuals);
+    showVisualResults(currentVisuals, item.document_type);
+    showTypeReview(item);
+    showAIResults(item);
     drawOverlay();
+}
+
+function showAIResults(item) {
+    const extraction = item.extraction;
+    $("field-card").hidden = !extraction;
+    $("ai-panel").hidden = !extraction;
+    $("field-results").replaceChildren();
+    const origins = { regex: "из текста", qwen: "уточнено AI по цитате", cv: "визуальный анализ", missing: "не найдено", unknown: "не определено" };
+    for (const [name, value] of Object.entries(extraction?.fields || {})) {
+        const label = document.createElement("dt");
+        label.textContent = fieldLabels[name] || name;
+        const description = document.createElement("dd");
+        const display = value === null ? "не определено" : typeof value === "boolean" ? value ? "обнаружено" : "не обнаружено" : String(value);
+        description.textContent = `${display} · ${origins[extraction.field_sources?.[name]] || "не определено"}`;
+        const quote = extraction.field_evidence?.[name]?.quote;
+        if (quote) description.textContent += `\nОснование: «${quote}»`;
+        $("field-results").append(label, description);
+    }
+    const waiting = aiSubmitting || item.ai_status === "processing";
+    $("ask-ai").disabled = waiting || item.status === "processing";
+    $("ask-ai").textContent = waiting ? "Проверяем источники…" : "Получить ответ";
+    $("ai-status").textContent = waiting ? "Готовим ответ по документу и правилам." : item.ai_status === "failed" ? "Не удалось проверить ответ. Попробуй позже." : "";
+    const result = item.ai_answer?.result;
+    $("ai-answer").textContent = result ? result.answer + (result.sources.length ? `\nИсточники: ${result.sources.join(", ")}` : "") : "";
+}
+
+function showTypeReview(item) {
+    const pending = item.status === "needs_review";
+    const retry = item.status === "failed" && item.retry_allowed;
+    if ((pending || retry) && reviewRequestId !== item.id &&
+        Array.from($("document-type").options).some((option) => option.value === item.selected_document_type)) {
+        $("document-type").value = item.selected_document_type;
+    }
+    reviewRequestId = pending || retry ? item.id : null;
+    const mismatch = item.document_type_matches_selection === false;
+    const unknown = item.detected_document_type === "unknown";
+    $("document-title").hidden = !item.document_title;
+    $("document-title").textContent = item.document_title ? `Название документа: ${item.document_title}` : "";
+    $("type-notice").hidden = editingType || (!mismatch && !unknown) || item.type_mismatch_confirmed;
+    $("type-notice").classList.toggle("neutral", unknown);
+    const label = allDocumentTypes.find((entry) => entry.value === item.detected_document_type)?.label;
+    $("type-notice-text").textContent = unknown
+        ? "Не удалось уверенно определить тип документа. Проверь выбранный тип перед отправкой."
+        : `Возможно, вы ошиблись в выборе типа документа. Вы отправили нам: „${label || item.document_title}“.`;
+    $("change-document-type").hidden = !pending;
+    $("override-document-type").hidden = !pending || !mismatch;
+    $("review-actions").hidden = !pending && !retry;
+    $("confirm-document").textContent = retry ? "Повторить отправку" : "Подтвердить и отправить";
+    setBusy(busy);
+}
+
+async function applyStoredType(refresh = true) {
+    if (!reviewRequestId) return;
+    await api(`/api/requests/${encodeURIComponent(reviewRequestId)}/type`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ document_type: $("document-type").value, mode, text: $("question").value.trim() }),
+    });
+    editingType = false;
+    $("type-change-hint").textContent = "Файл сохранён. Тип проверен без повторного распознавания.";
+    if (refresh) await poll();
+}
+
+async function confirmStoredDocument(override = false) {
+    if (busy || !reviewRequestId) return;
+    if (mode === "application_question" && !$("question").value.trim()) return showError("Напиши вопрос перед отправкой документа.");
+    const requestId = reviewRequestId;
+    actionInFlight = true;
+    setBusy(true);
+    showError("");
+    try {
+        const item = requestsById.get(requestId);
+        if (item.status !== "failed") await applyStoredType(false);
+        if (!override && item.status !== "failed" && item.document_type_matches_selection === false && $("document-type").value === item.selected_document_type) {
+            editingType = false;
+            showTypeReview(item);
+            showError("Подтверди выбранный тип жёлтой кнопкой или измени его в списке.");
+            return;
+        }
+        await api(`/api/requests/${encodeURIComponent(requestId)}/confirm`, {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ type_mismatch_confirmed: override }),
+        });
+        activeRequest = requestId;
+        completedRequest = null;
+    } catch (error) {
+        showError(error.message);
+    } finally {
+        actionInFlight = false;
+        setBusy(false);
+        await poll();
+    }
 }
 
 function clearFile() {
@@ -207,6 +324,15 @@ function clearFile() {
     currentVisuals = null;
     displayedRequest = null;
     previewPage = 1;
+    reviewRequestId = null;
+    editingType = false;
+    $("type-change-hint").textContent = "Файл сохранён. Проверь тип перед отправкой.";
+    $("type-notice").hidden = true;
+    $("review-actions").hidden = true;
+    $("document-title").hidden = true;
+    $("field-card").hidden = true;
+    $("ai-panel").hidden = true;
+    $("ai-answer").textContent = "";
     $("page-field").hidden = true;
     $("original-document").hidden = true;
     showVisualResults(null);
@@ -284,15 +410,15 @@ async function poll() {
         requestsById = new Map(result.requests.map((item) => [item.id, item]));
         result.messages.forEach(addMessage);
         const processing = result.requests.some((item) => item.status === "processing");
-        setBusy(processing);
+        setBusy(processing || actionInFlight);
         $("connection-status").textContent = "Чат подключён. Ответы появятся автоматически.";
-        $("chat-status").textContent = processing ? "Отправляем…" : "Ответы здесь";
+        $("chat-status").textContent = processing ? "Обрабатываем…" : result.requests.some((item) => item.status === "needs_review") ? "Нужно подтверждение" : "Ответы здесь";
         const latestDocument = viewerPinned ? requestsById.get(displayedRequest) : [...result.requests].reverse().find((item) => item.mode !== "question");
         if (latestDocument && !selectedFile) showDocument(latestDocument);
         const current = result.requests.find((item) => item.id === activeRequest);
-        if (current && current.status !== "processing" && completedRequest !== current.id) {
+        if (current && ["sent", "answered", "failed"].includes(current.status) && completedRequest !== current.id) {
             completedRequest = current.id;
-            if (current.status === "failed") showError("Обращение не отправилось. Попробуй ещё раз.");
+            if (current.status === "failed") showError(current.failure_message || "Не удалось отправить документ.");
             else {
                 $("question").value = "";
                 clearFile();
@@ -310,6 +436,21 @@ async function poll() {
 }
 
 navButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
+$("ask-ai").addEventListener("click", async () => {
+    if (aiSubmitting || !displayedRequest) return;
+    const question = $("ai-question").value.trim();
+    if (!question) return showError("Напиши вопрос AI-помощнику.");
+    aiSubmitting = true;
+    const item = requestsById.get(displayedRequest);
+    if (item) showAIResults(item);
+    try {
+        await api(`/api/requests/${encodeURIComponent(displayedRequest)}/ask`, {
+            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
+        });
+        showError("");
+    } catch (error) { showError(error.message); }
+    finally { aiSubmitting = false; await poll(); }
+});
 $("document").addEventListener("change", (event) => chooseFile(event.target.files[0]));
 $("remove-file").addEventListener("click", () => {
     clearFile();
@@ -323,6 +464,26 @@ $("preview-page").addEventListener("change", () => {
     const item = requestsById.get(displayedRequest);
     if (item) showDocument(item);
 });
+$("change-document-type").addEventListener("click", () => {
+    if (busy || !reviewRequestId) return;
+    editingType = true;
+    $("type-notice").hidden = true;
+    $("type-change-hint").textContent = "Выбери тип документа в списке. Файл сохранён.";
+    setBusy(false);
+    const select = $("document-type");
+    select.focus();
+    try { select.showPicker?.(); } catch (_) { /* Focus remains available. */ }
+});
+$("document-type").addEventListener("change", async () => {
+    if (busy || !reviewRequestId) return;
+    actionInFlight = true;
+    setBusy(true);
+    try { await applyStoredType(false); showError(""); }
+    catch (error) { showError(error.message); }
+    finally { actionInFlight = false; setBusy(false); await poll(); }
+});
+$("override-document-type").addEventListener("click", () => confirmStoredDocument(true));
+$("confirm-document").addEventListener("click", () => confirmStoredDocument(false));
 new ResizeObserver(() => setZoom(zoom)).observe($("document-preview"));
 $("zoom-out").addEventListener("click", () => setZoom(zoom - 25));
 $("zoom-in").addEventListener("click", () => setZoom(zoom + 25));
@@ -361,6 +522,7 @@ window.addEventListener("drop", (event) => event.preventDefault());
 $("request-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy) return;
+    if (reviewRequestId && mode !== "question" && !selectedFile) return confirmStoredDocument();
     const text = $("question").value.trim();
     if (mode !== "application" && (!text || text.startsWith("/"))) return showError("Напиши вопрос обычным текстом.");
     if (mode !== "question" && !selectedFile) return showError("Прикрепи один документ.");

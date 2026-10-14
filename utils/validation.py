@@ -1,4 +1,6 @@
 from telebot.types import Message
+from utils.document_fields import DOCUMENT_SCHEMAS
+from utils.document_rules import preliminary_check
 
 
 def is_text(message: Message) -> bool:
@@ -37,3 +39,16 @@ def validate_document_visuals(application_type, visuals):
             "manual_review": bool(visuals["warnings"]) or any(
                 item["status"] == "uncertain" or item.get("role") == "unknown"
                 for item in visuals["detections"])}
+
+
+def validate_document_fields(extraction):
+    """Schema-specific consistency checks; requiredness is not defined by this project."""
+    schema = DOCUMENT_SCHEMAS[extraction["document_type"]]
+    start, end = schema["period"]
+    fields = extraction["fields"]
+    issues = [{"field": name, "code": status} for name, status in extraction["field_statuses"].items() if status != "found"]
+    if fields[start] and fields[end] and fields[start] > fields[end]:
+        issues.append({"fields": [start, end], "code": "reversed_period"})
+    check = preliminary_check(extraction)
+    return {"document_type": extraction["document_type"], "status": "informational", "blocking": False,
+            "required_fields": check["required_fields"], "sources": check["sources"], "issues": issues}

@@ -5,9 +5,10 @@ from secrets import token_hex
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.serving import WSGIRequestHandler, make_server
-from utils.keyboards import APPLICATIONS, APPLICATION_QUESTIONS, APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
+from utils.keyboards import APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
 from utils.users import get_name
 from utils.documents import validate_document
+from utils.document_fields import DOCUMENT_SCHEMAS, normalize_document_type
 from .service import WebService
 
 
@@ -92,7 +93,7 @@ def create_app(bot, loop, dean_chat_id):
     @signed_in
     def index():
         service.call(service.audit(g.login["user_id"], "Открыта страница сайта"))
-        return render_template("index.html", modes=MODES, applications=APPLICATIONS, application_questions=APPLICATION_QUESTIONS)
+        return render_template("index.html", modes=MODES, document_schemas=DOCUMENT_SCHEMAS)
 
     @app.get("/api/session")
     @signed_in
@@ -148,9 +149,8 @@ def create_app(bot, loop, dean_chat_id):
             if mode == "application":
                 text = ""
 
-            types = APPLICATIONS if mode == "application" else APPLICATION_QUESTIONS
-
-            if application_type not in types:
+            application_type = normalize_document_type(application_type)
+            if application_type is None:
                 return jsonify(error="Выбери тип документа."), 400
 
             uploaded = request.files.get("photo")
@@ -186,6 +186,49 @@ def create_app(bot, loop, dean_chat_id):
             abort(404)
 
         return send_file(BytesIO(item["photo"]), mimetype=item["mimetype"])
+
+    @app.post("/api/requests/<request_id>/type")
+    @signed_in
+    def change_request_type(request_id):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error="Укажи тип документа."), 400
+        try:
+            service.call(service.change_type(g.login["user_id"], request_id, data.get("document_type"),
+                                           data.get("mode"), data.get("text", "")))
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id)
+
+    @app.post("/api/requests/<request_id>/ask")
+    @signed_in
+    def ask_document(request_id):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error="Напиши вопрос."), 400
+        try:
+            service.call(service.ask_ai(g.login["user_id"], request_id, data.get("question")))
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id), 202
+
+    @app.post("/api/requests/<request_id>/confirm")
+    @signed_in
+    def confirm_request(request_id):
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict) or type(data.get("type_mismatch_confirmed", False)) is not bool:
+            return jsonify(error="Укажи подтверждение типа как true или false."), 400
+        try:
+            service.call(service.confirm(g.login["user_id"], request_id, data.get("type_mismatch_confirmed", False)))
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id), 202
 
     @app.get("/api/requests/<request_id>/pages/<int:page>/photo")
     @signed_in

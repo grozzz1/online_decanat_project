@@ -15,6 +15,7 @@ from utils.users import get_name
 current_message: ContextVar[Message | None] = ContextVar("current_message", default=None)
 current_callback: ContextVar[CallbackQuery | None] = ContextVar("current_callback", default=None)
 current_web_user = ContextVar("current_web_user", default=None)
+current_ai_reply = ContextVar("current_ai_reply", default=False)
 
 
 class BotErrors(ExceptionHandler):
@@ -112,13 +113,19 @@ class Bot(AsyncTeleBot):
             return
 
         source = message if action == "Пользователь → бот" else None
+        context = source or current_message.get()
+        web = current_web_user.get()
+        document_context = current_ai_reply.get() or bool(web and web.get("application_type")) or bool(
+            context is not None and context.from_user is not None
+            and (context.chat.id, context.from_user.id) in application_types)
+        body = "Содержимое документа не записывается в журнал." if document_context else message.text or message.caption or "Без текста"
         text = (
             f"{action}\n"
             f"Чат: {message.chat.id}\n"
             f"Сообщение: {message.message_id}\n"
             f"Тип: {message.content_type}\n"
             f"{self.get_context(source)}\n"
-            f"{message.text or message.caption or 'Без текста'}"
+            f"{body}"
         )
 
         if message.photo:

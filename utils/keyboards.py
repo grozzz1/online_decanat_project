@@ -1,17 +1,14 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
 from utils.callbacks import reply_data, web_reply_data
+from utils.document_fields import DOCUMENT_SCHEMAS
 
 
 DEAN_QUESTION = "❔ Задать вопрос деканату"
 SEND_APPLICATION = "📝 Отправить заявление"
 APPLICATION_QUESTION = "🔍 Задать вопрос по заявлению"
 BACK = "⬅ Назад в меню"
-APPLICATIONS = ("Заявление на академический отпуск",)
-APPLICATION_QUESTIONS = (
-    "Справка об обучении",
-    "Заявление на академический отпуск",
-    "Справка о практике",
-)
+APPLICATIONS = tuple(schema["label"] for schema in DOCUMENT_SCHEMAS.values())
+APPLICATION_QUESTIONS = APPLICATIONS
 
 main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,

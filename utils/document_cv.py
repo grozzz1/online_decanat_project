@@ -54,10 +54,12 @@ def find_signature_anchors(words, width, height):
                 continue
             box = [min(other["bbox"][0] for other in nearby), min(other["bbox"][1] for other in nearby),
                    max(other["bbox"][2] for other in nearby), max(other["bbox"][3] for other in nearby)]
-            margin = max(width * .20, text_height * 8)
-            anchors.append({"bbox": box, "role": "student" if student and has_signature and not staff else "unknown",
-                            "roi": [max(0, box[0] - margin), max(0, box[1] - text_height * 5),
-                                    min(width, box[2] + margin), min(height, box[3] + text_height * 5)]})
+            margin = max(width * .35, text_height * 12)
+            specimen = any(_matches(v, ("образец", "пример", "sample", "specimen")) for v in values)
+            anchors.append({"bbox": box, "specimen": specimen,
+                            "role": "student" if student and has_signature and not staff and not specimen else "unknown",
+                            "roi": [max(0, box[0] - margin), max(0, box[1] - text_height * 8),
+                                    min(width, box[2] + margin), min(height, box[3] + text_height * 8)]})
     return anchors
 
 
@@ -170,28 +172,52 @@ def _stamp_candidates(rgb, ink, page):
 def _signature_candidates(ink, words, stamps, anchors, page):
     height, width = ink.shape
     remaining = ink.copy()
+    horizontal = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, np.ones((1, max(25, width // 18)), np.uint8))
+    vertical = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, np.ones((max(25, height // 18), 1), np.uint8))
+    rules = cv2.bitwise_or(horizontal, vertical)
+    remaining[rules > 0] = 0
+    # Restore intersections locally, without restoring the entire blank rule.
+    support = cv2.dilate(remaining, np.ones((5, 3), np.uint8))
+    remaining[(rules > 0) & (support > 0)] = ink[(rules > 0) & (support > 0)]
+    _, labels, ink_stats, _ = cv2.connectedComponentsWithStats(remaining, connectivity=8)
     for word in words:
         if word.get("confidence", 0) >= 55:
             x1, y1, x2, y2 = word["bbox"]
+            # OCR sometimes reads a piece of handwriting as a word. Preserve it
+            # only when an irregular connected stroke extends beyond that box.
+            ids = np.unique(labels[max(0, y1):y2, max(0, x1):x2])
+            text_height = max(1, y2 - y1)
+            handwriting = any(
+                stat[cv2.CC_STAT_WIDTH] > text_height * 3
+                and stat[cv2.CC_STAT_HEIGHT] > text_height * 1.4
+                and (stat[cv2.CC_STAT_TOP] < y1 - text_height * .2
+                     or stat[cv2.CC_STAT_TOP] + stat[cv2.CC_STAT_HEIGHT] > y2 + text_height * .2)
+                for index in ids if index for stat in [ink_stats[index]])
+            if handwriting and any(_overlap(word["bbox"], a["roi"]) > .9
+                                   and _overlap(word["bbox"], a["bbox"]) < .1 for a in anchors):
+                continue
             remaining[max(0, y1 - 2):min(height, y2 + 2), max(0, x1 - 2):min(width, x2 + 2)] = 0
-    # Remove long form rules and stamp interiors before grouping handwriting strokes.
-    horizontal = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, np.ones((1, max(25, width // 18)), np.uint8))
-    vertical = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, np.ones((max(25, height // 18), 1), np.uint8))
-    remaining[cv2.bitwise_or(horizontal, vertical) > 0] = 0
     for stamp in stamps:
         x1, y1, x2, y2 = stamp["bbox"]
         remaining[y1:y2, x1:x2] = 0
-    rois = [anchor["roi"] for anchor in anchors] + [[0, height * .45, width, height]]
+    # Group on the full page before applying contextual ROIs. Cropping first
+    # created partial candidates which could win deduplication over a full box.
+    rois = [[0, 0, width, height]]
     detections = []
     for roi in rois:
         rx1, ry1, rx2, ry2 = [int(v) for v in roi]
         crop = remaining[ry1:ry2, rx1:rx2]
         if not crop.size:
             continue
-        grouped = cv2.morphologyEx(crop, cv2.MORPH_CLOSE, np.ones((3, max(3, width // 180)), np.uint8))
+        grouped = cv2.dilate(crop, np.ones((max(3, height // 300), max(5, width // 85)), np.uint8))
         contours, _ = cv2.findContours(grouped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
+            # Dilation joins nearby components; its artificial border is not ink.
+            yy, xx = np.nonzero(crop[y:y + h, x:x + w])
+            if not len(xx):
+                continue
+            x, y, w, h = x + int(xx.min()), y + int(yy.min()), int(xx.max() - xx.min() + 1), int(yy.max() - yy.min() + 1)
             if not (width * .04 < w < width * .48 and height * .012 < h < height * .14 and 1.3 < w / h < 12):
                 continue
             piece = crop[y:y + h, x:x + w]
@@ -222,10 +248,20 @@ def _signature_candidates(ink, words, stamps, anchors, page):
             score += .18 if nearby else 0
             if not nearby:
                 score = min(score, .60)
+            if nearby and nearby[0].get("specimen"):
+                score = min(score, .60)
+            if box[1] < height * .45 and not nearby:
+                continue
+            padding = max(2, round(max(width, height) * .002))
+            box = [max(0, box[0] - padding), max(0, box[1] - padding),
+                   min(width, box[2] + padding), min(height, box[3] + padding)]
+            clipped = box[0] == 0 or box[1] == 0 or box[2] == width or box[3] == height
+            if clipped:
+                score = min(score, .60)
             detections.append(_candidate("signature", box, score, page,
                                          {"connected_width": longest, "height_variation": variation,
                                           "ink_density": density, "occupied_rows": occupied_rows,
-                                          "label_context": bool(nearby)}, role))
+                                          "label_context": bool(nearby), "boundary_clipped": clipped}, role))
     return _deduplicate(detections)
 
 
