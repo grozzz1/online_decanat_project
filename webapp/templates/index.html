@@ -65,13 +65,13 @@
                                 <span id="application-only" hidden>{{ applications[0] }}</span>
                             </div>
                             <div class="field" id="upload-field" hidden>
-                                <label class="field-label" for="document">Фото документа</label>
+                                <label class="field-label" for="document">Документ</label>
                                 <label class="dropzone" id="dropzone" for="document">
                                     <span class="upload-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0L7 9m5-5 5 5M4 16v4h16v-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-                                    <strong id="upload-title">Перетащи фото сюда</strong><span id="upload-caption">или выбери с компьютера</span><span class="file-formats">JPG, PNG · до 10 МБ</span>
-                                    <input class="visually-hidden" id="document" type="file" accept="image/jpeg,image/png">
+                                    <strong id="upload-title">Перетащи документ сюда</strong><span id="upload-caption">или выбери с компьютера</span><span class="file-formats">JPG, PNG, PDF · до 10 МБ · до 12 страниц</span>
+                                    <input class="visually-hidden" id="document" type="file" accept="image/jpeg,image/png,application/pdf,.pdf,.jpg,.jpeg,.png">
                                 </label>
-                                <button class="text-button remove-file" id="remove-file" type="button" hidden>Убрать фото</button>
+                                <button class="text-button remove-file" id="remove-file" type="button" hidden>Убрать документ</button>
                             </div>
                             <div class="field" id="question-field">
                                 <label for="question">Твой вопрос</label>
@@ -88,8 +88,14 @@
                         <div class="card-heading"><span class="step-number">02</span><h2 id="preview-heading">Документ</h2><div class="zoom-controls"><button type="button" id="zoom-out" aria-label="Уменьшить фото">−</button><span id="zoom-value">100%</span><button type="button" id="zoom-in" aria-label="Увеличить фото">+</button></div></div>
                         <div class="document-preview" id="document-preview">
                             <div class="preview-empty" id="preview-empty"><svg viewBox="0 0 64 72" fill="none" aria-hidden="true"><path d="M12 2h28l12 12v56H12V2Z" fill="white" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M40 2v14h12M22 30h20M22 40h20M22 50h13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><strong>Здесь будет твоё фото</strong><span>Выбери документ, чтобы посмотреть его перед отправкой.</span></div>
-                            <img id="preview-image" alt="Предпросмотр документа" hidden>
+                            <div class="preview-stage" id="preview-stage" hidden><img id="preview-image" alt="Предпросмотр документа"><canvas id="visual-overlay" aria-label="Области печатей и подписей"></canvas></div>
                         </div>
+                        <div class="document-tools">
+                            <label id="page-field" hidden>Страница <select id="preview-page" aria-label="Страница документа"></select></label>
+                            <label><input type="checkbox" id="show-visuals" checked> Подсветить признаки</label>
+                            <a id="original-document" hidden>Открыть оригинал</a>
+                        </div>
+                        <div class="visual-results" id="visual-results" aria-live="polite">Анализ печатей и подписей появится после отправки.</div>
                         <div class="recognition"><div class="recognition-heading"><h3>Текст с фото</h3><span id="ocr-status">Распознавание</span></div><pre id="recognized-text">После отправки здесь появится распознанный текст документа.</pre></div>
                     </section>
 

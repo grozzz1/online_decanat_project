@@ -65,7 +65,7 @@ async def handle_menu(bot, message):
         states[key] = "application_photo"
         await bot.send_message(
             message.chat.id,
-            f"{text}. Пришли одно фото заявления:",
+            f"{text}. Пришли фото заявления или файл JPG, PNG, PDF до 10 МБ:",
             reply_markup=back_menu,
         )
     elif states.get(key) == "application_question_type" and text in APPLICATION_QUESTIONS:
@@ -73,7 +73,7 @@ async def handle_menu(bot, message):
         states[key] = "application_question"
         await bot.send_message(
             message.chat.id,
-            f"{text}. Пришли одно фото и напиши вопрос в подписи к нему:",
+            f"{text}. Пришли фото или файл JPG, PNG, PDF до 10 МБ и напиши вопрос в подписи:",
             reply_markup=back_menu,
         )
     else:

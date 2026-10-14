@@ -13,6 +13,11 @@ async def main():
     register_handlers(bot, dean_chat_id)
     loop.set_exception_handler(bot.handle_loop_error)
     bot.start_logs()
+    try:
+        identity = await bot.get_me()
+        bot.write_log(f"Подключение к Telegram установлено: @{identity.username}")
+    except Exception as error:
+        bot.log_error(error, "Не удалось проверить подключение к Telegram")
     app = create_app(bot, loop, dean_chat_id)
     Thread(target=run_server, args=(app, bot, loop), daemon=True).start()
 

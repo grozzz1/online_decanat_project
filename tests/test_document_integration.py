@@ -1,0 +1,144 @@
+import asyncio
+from io import BytesIO
+from threading import Thread
+from types import SimpleNamespace
+import unittest
+from unittest.mock import AsyncMock, patch
+
+from telebot.types import User
+
+from test_document_cv import encoded, page
+from handlers.requests import send_application
+from utils.states import application_types, clear_state, states
+from webapp.app import create_app
+
+
+class WebIntegrationTests(unittest.TestCase):
+    def setUp(self):
+        self.loop = asyncio.new_event_loop()
+        self.thread = Thread(target=self.loop.run_forever, daemon=True)
+        self.thread.start()
+        self.bot = SimpleNamespace(token="123:test", write_log=lambda *_: None, log_error=lambda *_: None,
+                                   send_photo=AsyncMock(return_value=SimpleNamespace(message_id=1)),
+                                   send_document=AsyncMock(return_value=SimpleNamespace(message_id=1)),
+                                   send_message=AsyncMock(return_value=SimpleNamespace(message_id=2)))
+        self.app = create_app(self.bot, self.loop, -1001)
+        self.app.config["TESTING"] = True
+        self.service = self.app.extensions["decanat"]
+        self.client = self.app.test_client()
+        user = User(123, False, "Student")
+        code = self.service.store.create_login(user)
+        self.client.get(f"/login?code={code}")
+        self.csrf = self.client.get("/api/session").json["csrf"]
+        self.patches = [patch("utils.ocr.pytesseract.image_to_string", return_value="Распознанный текст"),
+                        patch("utils.ocr.pytesseract.image_to_osd", return_value={}),
+                        patch("utils.ocr._ocr_words", return_value=[])]
+        for mock in self.patches:
+            mock.start()
+
+    def tearDown(self):
+        self.finish_processing()
+        for mock in self.patches:
+            mock.stop()
+        self.loop.call_soon_threadsafe(self.loop.stop)
+        self.thread.join(timeout=5)
+        self.loop.close()
+
+    def finish_processing(self):
+        async def finish():
+            if self.service.tasks:
+                await asyncio.gather(*self.service.tasks)
+        asyncio.run_coroutine_threadsafe(finish(), self.loop).result(timeout=20)
+
+    def upload(self, data, name):
+        return self.client.post("/api/requests", data={"mode": "application", "text": "",
+                                "application_type": "Заявление на академический отпуск",
+                                "photo": (BytesIO(data), name)}, headers={"X-CSRF-Token": self.csrf})
+
+    def test_image_upload_analysis_and_preview(self):
+        image, _ = page(stamp=True, signature=True)
+        original = encoded(image)
+        response = self.upload(original, "document.png")
+        self.assertEqual(response.status_code, 202)
+        self.finish_processing()
+        item = self.client.get("/api/messages").json["requests"][0]
+        self.assertEqual(item["status"], "sent")
+        self.assertTrue(item["visuals"]["stamp"]["detected"])
+        self.assertFalse(item["validation"]["blocking"])
+        self.assertNotIn("previews", item)
+        preview = self.client.get(f"/api/requests/{item['id']}/pages/1/photo")
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.mimetype, "image/jpeg")
+        with BytesIO(preview.data) as buffer:
+            from PIL import Image
+            with Image.open(buffer) as loaded:
+                self.assertEqual(loaded.size, image.size)
+        self.assertEqual(self.client.get(f"/api/requests/{item['id']}/photo").data, original)
+        self.bot.send_photo.assert_awaited_once()
+
+    def test_pdf_is_forwarded_as_document_and_each_page_is_accessible(self):
+        first, _ = page(stamp=True)
+        second, _ = page(signature=True)
+        buffer = BytesIO()
+        first.save(buffer, "PDF", save_all=True, append_images=[second], resolution=100)
+        original = buffer.getvalue()
+        response = self.upload(original, "document.pdf")
+        self.assertEqual(response.status_code, 202)
+        self.finish_processing()
+        item = self.client.get("/api/messages").json["requests"][0]
+        self.assertEqual(item["status"], "sent")
+        self.assertEqual(len(item["visuals"]["pages"]), 2)
+        for number in (1, 2):
+            self.assertEqual(self.client.get(f"/api/requests/{item['id']}/pages/{number}/photo").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/requests/{item['id']}/pages/3/photo").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/requests/{item['id']}/photo").data, original)
+        self.bot.send_document.assert_awaited_once()
+        self.bot.send_photo.assert_not_awaited()
+
+    def test_reject_invalid_content_and_missing_csrf(self):
+        response = self.upload(b"corrupt", "document.pdf")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.client.post("/api/requests", data={"mode": "application"}).status_code, 403)
+
+    def test_preview_access_is_restricted_to_owner(self):
+        image, _ = page(stamp=True)
+        response = self.upload(encoded(image), "document.png")
+        self.finish_processing()
+        request_id = response.json["request_id"]
+        another = self.app.test_client()
+        self.assertEqual(another.get(f"/api/requests/{request_id}/pages/1/photo").status_code, 401)
+        code = self.service.store.create_login(User(456, False, "Other"))
+        another.get(f"/login?code={code}")
+        self.assertEqual(another.get(f"/api/requests/{request_id}/pages/1/photo").status_code, 404)
+
+
+class BotIntegrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_pdf_attachment_and_visual_summary(self):
+        first, _ = page(stamp=True)
+        buffer = BytesIO()
+        first.save(buffer, "PDF")
+        bot = SimpleNamespace(token="123:test", get_file=AsyncMock(return_value=SimpleNamespace(file_path="document.pdf")),
+                              download_file=AsyncMock(return_value=buffer.getvalue()),
+                              send_document=AsyncMock(return_value=SimpleNamespace(message_id=1)),
+                              send_photo=AsyncMock(), send_message=AsyncMock(), reply_to=AsyncMock())
+        message = SimpleNamespace(photo=None, document=SimpleNamespace(file_id="test", file_size=len(buffer.getvalue())),
+                                  from_user=User(123, False, "Student"), caption=None)
+        key = (123, 123)
+        states[key] = "application_photo"
+        application_types[key] = "Заявление на академический отпуск"
+        try:
+            with patch("utils.ocr.pytesseract.image_to_string", return_value="Текст"), \
+                 patch("utils.ocr.pytesseract.image_to_osd", return_value={}), \
+                 patch("utils.ocr._ocr_words", return_value=[]):
+                await send_application(bot, message, key, -1001)
+            bot.send_document.assert_awaited_once()
+            bot.send_photo.assert_not_awaited()
+            summary = bot.reply_to.await_args.args[1]
+            self.assertIn("эвристика", summary)
+            self.assertIn("Печать", summary)
+        finally:
+            clear_state(key)
+
+
+if __name__ == "__main__":
+    unittest.main()

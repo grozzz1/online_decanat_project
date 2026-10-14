@@ -2,8 +2,8 @@ const $ = (id) => document.getElementById(id);
 const navButtons = Array.from(document.querySelectorAll("[data-mode]"));
 const descriptions = {
     question: ["Вопрос деканату", "Напиши свой вопрос. Ответ преподавателя появится здесь, в чате."],
-    application: ["Отправка заявления", "Прикрепи фото заявления на академический отпуск и отправь его в деканат."],
-    application_question: ["Вопрос по заявлению", "Выбери документ, прикрепи фото и напиши, что хочешь уточнить."],
+    application: ["Отправка заявления", "Прикрепи заявление в формате JPG, PNG или PDF и отправь его в деканат."],
+    application_question: ["Вопрос по заявлению", "Выбери документ, прикрепи файл и напиши, что хочешь уточнить."],
 };
 const documentTypes = Array.from($("document-type").options, (option) => option.value);
 let mode = "question";
@@ -17,6 +17,11 @@ let completedRequest = null;
 let busy = false;
 let polling = false;
 let pollTimer = null;
+let currentVisuals = null;
+let previewPage = 1;
+let displayedRequest = null;
+let requestsById = new Map();
+let viewerPinned = false;
 
 function showError(text) {
     $("form-error").textContent = text;
@@ -59,7 +64,7 @@ function setMode(value, audit = true) {
     $("question").placeholder = isQuestion ? "Например: когда можно забрать справку об обучении?" : "Например: правильно ли заполнено заявление?";
     $("page-title").textContent = descriptions[mode][0];
     $("page-description").textContent = descriptions[mode][1];
-    $("form-hint").textContent = mode === "application" ? "Фото и распознанный текст будут переданы в деканат." : "Ответ придёт в этот чат. Можно вернуться на страницу позже.";
+    $("form-hint").textContent = mode === "application" ? "Документ, распознанный текст и результаты анализа будут переданы в деканат." : "Ответ придёт в этот чат. Можно вернуться на страницу позже.";
     $("request-tip").textContent = isQuestion ? "Опиши ситуацию и укажи детали, которые помогут деканату ответить." : "Сфотографируй весь документ при хорошем освещении. Текст должен быть чётким.";
     document.querySelector(".chat-step").textContent = isQuestion ? "02" : "03";
     navButtons.forEach((button) => {
@@ -77,39 +82,154 @@ function setMode(value, audit = true) {
 function setZoom(value) {
     zoom = Math.max(50, Math.min(250, value));
     $("zoom-value").textContent = `${zoom}%`;
-    $("preview-image").style.maxWidth = zoom === 100 ? "100%" : "none";
-    $("preview-image").style.maxHeight = zoom === 100 ? "100%" : "none";
-    $("preview-image").style.width = zoom === 100 ? "auto" : `${zoom}%`;
+    const image = $("preview-image");
+    const container = $("document-preview");
+    const fit = Math.min((container.clientWidth - 20) / (image.naturalWidth || 300),
+        (container.clientHeight - 20) / (image.naturalHeight || 400), 1);
+    $("preview-stage").style.width = `${Math.max(1, (image.naturalWidth || 300) * fit * zoom / 100)}px`;
+    drawOverlay();
 }
 
 function showPreview(url) {
-    if ($("preview-image").getAttribute("src") === url && !$("preview-image").hidden) return;
+    if ($("preview-image").getAttribute("src") === url && !$("preview-stage").hidden) return;
     $("preview-image").src = url;
-    $("preview-image").hidden = false;
+    $("preview-stage").hidden = false;
     $("preview-empty").hidden = true;
     setZoom(100);
+}
+
+function drawOverlay() {
+    const image = $("preview-image");
+    const canvas = $("visual-overlay");
+    const width = image.clientWidth;
+    const height = image.clientHeight;
+    const ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * ratio);
+    canvas.height = Math.round(height * ratio);
+    const context = canvas.getContext("2d");
+    if (!width || !height || !image.complete || !currentVisuals || !$("show-visuals").checked) return;
+    const page = currentVisuals.pages.find((item) => item.page === previewPage);
+    if (!page) return;
+    context.scale(ratio, ratio);
+    context.lineWidth = 2;
+    context.font = "11px Segoe UI";
+    for (const item of currentVisuals.detections.filter((item) => item.page === previewPage)) {
+        const [x1, y1, x2, y2] = item.bbox;
+        const x = x1 * width / page.width;
+        const y = y1 * height / page.height;
+        context.strokeStyle = item.status === "uncertain" ? "#e2ad00" : item.type === "stamp" ? "#18a34a" : "#3375ec";
+        context.strokeRect(x, y, (x2 - x1) * width / page.width, (y2 - y1) * height / page.height);
+        context.fillStyle = context.strokeStyle;
+        const label = item.type === "stamp" ? "Печать" : item.role === "student" ? "Подпись студента" : "Подпись (?)";
+        context.fillText(label, x, Math.max(12, y - 4));
+    }
+}
+
+function showVisualResults(visuals) {
+    const target = $("visual-results");
+    target.replaceChildren();
+    if (!visuals) {
+        target.textContent = "Анализ печатей и подписей появится после обработки документа.";
+        return;
+    }
+    const summary = document.createElement("p");
+    const unavailable = visuals.pages.some((page) => page.analysis_status === "unavailable");
+    summary.textContent = unavailable ? "Визуальный анализ выполнен не для всех страниц." : "Визуальный анализ завершён.";
+    const list = document.createElement("ul");
+    for (const [key, label] of [["stamp", "Печать"], ["student_signature", "Подпись студента"]]) {
+        const entry = document.createElement("li");
+        const result = visuals[key];
+        entry.textContent = `${label}: ${result.detected ? result.status === "uncertain" ? "сомнительный кандидат" : "найдены визуальные признаки" : result.status === "unknown" ? "не удалось определить" : "не обнаружена алгоритмом"}.`;
+        list.append(entry);
+    }
+    for (const item of visuals.detections) {
+        const entry = document.createElement("li");
+        const label = item.type === "stamp" ? "Печать" : item.role === "student" ? "Подпись студента" : "Подпись, роль неизвестна";
+        entry.textContent = `${label} · стр. ${item.page} · score ${item.confidence.toFixed(2)}${item.status === "uncertain" ? " · требуется проверка" : ""}`;
+        list.append(entry);
+    }
+    const note = document.createElement("p");
+    note.textContent = "Оценка эвристическая. Подлинность не проверяется; отсутствие признаков не запрещает отправку.";
+    const legend = document.createElement("div");
+    legend.className = "visual-legend";
+    for (const [className, text] of [["stamp", "Зелёный — печать"], ["signature", "Синий — подпись"], ["uncertain", "Жёлтый — сомнение"]]) {
+        const label = document.createElement("span");
+        label.className = className;
+        label.textContent = text;
+        legend.append(label);
+    }
+    target.append(summary, list, note, legend);
+    for (const warning of visuals.warnings) {
+        const text = document.createElement("p");
+        text.textContent = warning;
+        target.append(text);
+    }
+}
+
+function showDocument(item) {
+    if (displayedRequest !== item.id) {
+        previewPage = 1;
+        displayedRequest = item.id;
+    }
+    currentVisuals = item.visuals;
+    const pages = currentVisuals ? currentVisuals.pages : [];
+    if ($("preview-page").options.length !== pages.length) {
+        $("preview-page").replaceChildren(...pages.map((page) => new Option(String(page.page), String(page.page))));
+    }
+    $("preview-page").value = String(previewPage);
+    $("page-field").hidden = pages.length <= 1;
+    $("original-document").hidden = false;
+    $("original-document").href = `/api/requests/${encodeURIComponent(item.id)}/photo`;
+    $("original-document").target = "_blank";
+    $("original-document").rel = "noopener";
+    if (pages.length || item.mimetype !== "application/pdf") {
+        showPreview(`/api/requests/${encodeURIComponent(item.id)}/pages/${previewPage}/photo${pages.length ? "?analyzed=1" : ""}`);
+    } else {
+        $("preview-stage").hidden = true;
+        $("preview-empty").hidden = false;
+        $("preview-empty").querySelector("strong").textContent = "Предпросмотр PDF появится после обработки";
+    }
+    $("recognized-text").textContent = item.recognized || (item.status === "processing" ? "Распознаём текст документа…" : item.status === "failed" ? "Не удалось обработать документ. Попробуй отправить его ещё раз." : "Не удалось распознать текст.");
+    $("recognized-text").classList.toggle("has-text", Boolean(item.recognized));
+    $("ocr-status").textContent = item.status === "processing" ? "В процессе" : item.status === "failed" ? "Ошибка" : "Готово";
+    showVisualResults(currentVisuals);
+    drawOverlay();
 }
 
 function clearFile() {
     selectedFile = null;
     $("document").value = "";
-    $("upload-title").textContent = "Перетащи фото сюда";
+    $("upload-title").textContent = "Перетащи документ сюда";
     $("upload-caption").textContent = "или выбери с компьютера";
     $("remove-file").hidden = true;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = null;
+    currentVisuals = null;
+    displayedRequest = null;
+    previewPage = 1;
+    $("page-field").hidden = true;
+    $("original-document").hidden = true;
+    showVisualResults(null);
+    drawOverlay();
 }
 
 function chooseFile(file) {
     if (busy || !file) return;
-    if (!["image/jpeg", "image/png"].includes(file.type)) return showError("Выбери фото в формате JPG или PNG.");
-    if (file.size > 10 * 1024 * 1024) return showError("Фото должно быть не больше 10 МБ.");
+    if (!["image/jpeg", "image/png", "application/pdf"].includes(file.type) && !/\.(pdf|jpe?g|png)$/i.test(file.name)) return showError("Выбери документ в формате JPG, PNG или PDF.");
+    if (file.size > 10 * 1024 * 1024) return showError("Документ должен быть не больше 10 МБ.");
     clearFile();
     selectedFile = file;
-    previewUrl = URL.createObjectURL(file);
-    showPreview(previewUrl);
+    viewerPinned = false;
+    if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) {
+        $("preview-stage").hidden = true;
+        $("preview-empty").hidden = false;
+        $("preview-empty").querySelector("strong").textContent = "Предпросмотр PDF появится после отправки";
+    } else {
+        previewUrl = URL.createObjectURL(file);
+        showPreview(previewUrl);
+    }
     $("upload-title").textContent = file.name;
-    $("upload-caption").textContent = "Фото готово к отправке";
+    $("upload-caption").textContent = "Документ готов к отправке";
     $("remove-file").hidden = false;
     $("recognized-text").textContent = "После отправки здесь появится распознанный текст документа.";
     $("recognized-text").classList.remove("has-text");
@@ -132,14 +252,16 @@ function addMessage(message) {
         const button = document.createElement("button");
         button.className = "message-photo";
         button.type = "button";
-        button.setAttribute("aria-label", "Открыть фото документа");
-        const image = document.createElement("img");
-        image.src = `/api/requests/${encodeURIComponent(message.request_id)}/photo`;
-        image.alt = "Отправленное фото документа";
-        button.append(image);
+        button.setAttribute("aria-label", "Посмотреть документ и результаты анализа");
+        button.textContent = "📄 Посмотреть документ";
         button.addEventListener("click", () => {
-            $("dialog-photo").src = image.src;
-            $("photo-dialog").showModal();
+            const item = requestsById.get(message.request_id);
+            if (!item || busy) return;
+            clearFile();
+            viewerPinned = true;
+            setMode(item.mode, false);
+            showDocument(item);
+            $("preview-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
         });
         body.append(button);
     }
@@ -159,18 +281,14 @@ async function poll() {
     clearTimeout(pollTimer);
     try {
         const result = await api(`/api/messages?after=${lastMessage}`);
+        requestsById = new Map(result.requests.map((item) => [item.id, item]));
         result.messages.forEach(addMessage);
         const processing = result.requests.some((item) => item.status === "processing");
         setBusy(processing);
         $("connection-status").textContent = "Чат подключён. Ответы появятся автоматически.";
         $("chat-status").textContent = processing ? "Отправляем…" : "Ответы здесь";
-        const document = [...result.requests].reverse().find((item) => item.mode !== "question");
-        if (document && !selectedFile) {
-            showPreview(`/api/requests/${encodeURIComponent(document.id)}/photo`);
-            $("recognized-text").textContent = document.recognized || (document.status === "processing" ? "Распознаём текст с фото…" : document.status === "failed" ? "Не удалось обработать документ. Попробуй отправить его ещё раз." : "Не удалось распознать текст.");
-            $("recognized-text").classList.toggle("has-text", Boolean(document.recognized));
-            $("ocr-status").textContent = document.status === "processing" ? "В процессе" : document.status === "failed" ? "Ошибка" : "Готово";
-        }
+        const latestDocument = viewerPinned ? requestsById.get(displayedRequest) : [...result.requests].reverse().find((item) => item.mode !== "question");
+        if (latestDocument && !selectedFile) showDocument(latestDocument);
         const current = result.requests.find((item) => item.id === activeRequest);
         if (current && current.status !== "processing" && completedRequest !== current.id) {
             completedRequest = current.id;
@@ -179,10 +297,7 @@ async function poll() {
                 $("question").value = "";
                 clearFile();
                 if (current.mode !== "question") {
-                    showPreview(`/api/requests/${encodeURIComponent(current.id)}/photo`);
-                    $("recognized-text").textContent = current.recognized || "Не удалось распознать текст.";
-                    $("recognized-text").classList.toggle("has-text", Boolean(current.recognized));
-                    $("ocr-status").textContent = "Готово";
+                    showDocument(current);
                 }
             }
         }
@@ -198,9 +313,17 @@ navButtons.forEach((button) => button.addEventListener("click", () => setMode(bu
 $("document").addEventListener("change", (event) => chooseFile(event.target.files[0]));
 $("remove-file").addEventListener("click", () => {
     clearFile();
-    $("preview-image").hidden = true;
+    $("preview-stage").hidden = true;
     $("preview-empty").hidden = false;
 });
+$("preview-image").addEventListener("load", () => setZoom(zoom));
+$("show-visuals").addEventListener("change", drawOverlay);
+$("preview-page").addEventListener("change", () => {
+    previewPage = Number($("preview-page").value);
+    const item = requestsById.get(displayedRequest);
+    if (item) showDocument(item);
+});
+new ResizeObserver(() => setZoom(zoom)).observe($("document-preview"));
 $("zoom-out").addEventListener("click", () => setZoom(zoom - 25));
 $("zoom-in").addEventListener("click", () => setZoom(zoom + 25));
 $("close-photo").addEventListener("click", () => $("photo-dialog").close());
@@ -230,7 +353,7 @@ for (const type of ["dragenter", "dragover"]) {
 for (const type of ["dragleave", "drop"]) $("dropzone").addEventListener(type, () => $("dropzone").classList.remove("dragging"));
 $("dropzone").addEventListener("drop", (event) => {
     event.preventDefault();
-    if (event.dataTransfer.files.length !== 1) return showError("Прикрепи одно фото документа.");
+    if (event.dataTransfer.files.length !== 1) return showError("Прикрепи один документ.");
     chooseFile(event.dataTransfer.files[0]);
 });
 window.addEventListener("dragover", (event) => event.preventDefault());
@@ -240,7 +363,7 @@ $("request-form").addEventListener("submit", async (event) => {
     if (busy) return;
     const text = $("question").value.trim();
     if (mode !== "application" && (!text || text.startsWith("/"))) return showError("Напиши вопрос обычным текстом.");
-    if (mode !== "question" && !selectedFile) return showError("Прикрепи одно фото документа.");
+    if (mode !== "question" && !selectedFile) return showError("Прикрепи один документ.");
     const data = new FormData();
     data.append("mode", mode);
     data.append("text", mode === "application" ? "" : text);
@@ -251,6 +374,8 @@ $("request-form").addEventListener("submit", async (event) => {
     try {
         const result = await api("/api/requests", { method: "POST", body: data });
         activeRequest = result.request_id;
+        clearFile();
+        viewerPinned = false;
         await poll();
     } catch (error) {
         showError(error.message);

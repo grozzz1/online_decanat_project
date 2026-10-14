@@ -3,11 +3,11 @@ from hmac import compare_digest
 from io import BytesIO
 from secrets import token_hex
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
-from PIL import Image, UnidentifiedImageError
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.serving import WSGIRequestHandler, make_server
 from utils.keyboards import APPLICATIONS, APPLICATION_QUESTIONS, APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
 from utils.users import get_name
+from utils.documents import validate_document
 from .service import WebService
 
 
@@ -156,22 +156,17 @@ def create_app(bot, loop, dean_chat_id):
             uploaded = request.files.get("photo")
 
             if uploaded is None:
-                return jsonify(error="Прикрепи одно фото документа."), 400
+                return jsonify(error="Прикрепи один документ JPG, PNG или PDF."), 400
 
             photo = uploaded.read()
 
             if not photo or len(photo) > 10 * 1024 * 1024:
-                return jsonify(error="Фото должно быть не больше 10 МБ."), 400
+                return jsonify(error="Документ должен быть не больше 10 МБ."), 400
 
             try:
-                with Image.open(BytesIO(photo)) as image:
-                    if image.format not in ("JPEG", "PNG"):
-                        return jsonify(error="Прикрепи фото в формате JPG или PNG."), 400
-
-                    mimetype = Image.MIME[image.format]
-                    image.verify()
-            except (UnidentifiedImageError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning):
-                return jsonify(error="Не удалось открыть фото. Прикрепи другое изображение."), 400
+                mimetype = validate_document(photo)
+            except ValueError as error:
+                return jsonify(error=str(error)), 400
         else:
             application_type = ""
 
@@ -192,6 +187,18 @@ def create_app(bot, loop, dean_chat_id):
 
         return send_file(BytesIO(item["photo"]), mimetype=item["mimetype"])
 
+    @app.get("/api/requests/<request_id>/pages/<int:page>/photo")
+    @signed_in
+    def request_page(request_id, page):
+        item = service.store.get_request(g.login["user_id"], request_id)
+        if item is None or page < 1:
+            abort(404)
+        if page <= len(item["previews"]):
+            return send_file(BytesIO(item["previews"][page - 1]), mimetype="image/jpeg")
+        if page == 1 and item["photo"] and item["mimetype"] != "application/pdf":
+            return send_file(BytesIO(item["photo"]), mimetype=item["mimetype"])
+        abort(404)
+
     @app.post("/api/logout")
     @signed_in
     def logout():
@@ -208,7 +215,7 @@ def create_app(bot, loop, dean_chat_id):
         text = "Не удалось обработать запрос. Попробуй ещё раз чуть позже."
 
         if isinstance(error, RequestEntityTooLarge):
-            text = "Фото должно быть не больше 10 МБ."
+            text = "Документ должен быть не больше 10 МБ."
         elif status == 403:
             text = "Обнови страницу и попробуй ещё раз."
         elif status == 404:

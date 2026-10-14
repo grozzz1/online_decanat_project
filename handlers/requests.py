@@ -1,4 +1,5 @@
 from io import BytesIO
+from telebot import util
 from telebot.asyncio_helper import ApiException, RequestTimeout
 from utils import delivery
 from utils.keyboards import (
@@ -8,9 +9,10 @@ from utils.keyboards import (
     back_menu,
     main_menu,
 )
-from utils.ocr import recognize_text_async
+from utils.documents import MAX_BYTES, validate_document
+from utils.ocr import analyze_document_async
 from utils.states import application_types, clear_state, states
-from utils.validation import has_caption, is_photo, is_text
+from utils.validation import has_caption, is_document, is_text
 
 
 async def send_question(bot, message, dean_chat_id):
@@ -21,16 +23,23 @@ async def send_question(bot, message, dean_chat_id):
 
 
 async def send_application(bot, message, key, dean_chat_id):
-    file = await bot.get_file(message.photo[-1].file_id)
+    attachment = message.photo[-1] if message.photo else message.document
+    if attachment.file_size and attachment.file_size > MAX_BYTES:
+        raise ValueError("Документ должен быть не больше 10 МБ.")
+    file = await bot.get_file(attachment.file_id)
 
     with BytesIO(await bot.download_file(file.file_path)) as photo:
-        recognized = await recognize_text_async(photo)
+        mimetype = validate_document(photo.getvalue())
+        analysis = await analyze_document_async(photo, application_types[key])
+        recognized = analysis["recognized"]
         question = message.caption if states[key] == "application_question" else None
         markup = answer_student_menu(bot.token, message) if question is not None else None
         await delivery.send_application(
             bot, dean_chat_id, message.from_user, photo, application_types[key],
-            recognized, question, markup,
+            recognized, question, markup, visuals=analysis["visuals"], mimetype=mimetype,
         )
+        for part in util.split_string(delivery.visual_summary(analysis["visuals"]), chars_per_string=4096):
+            await bot.reply_to(message, part)
 
 
 async def accept_request(bot, message, key, dean_chat_id):
@@ -41,6 +50,9 @@ async def accept_request(bot, message, key, dean_chat_id):
             await send_question(bot, message, dean_chat_id)
         else:
             await send_application(bot, message, key, dean_chat_id)
+    except ValueError as error:
+        await bot.reply_to(message, str(error), reply_markup=back_menu)
+        return
     except (ApiException, RequestTimeout, OSError, RuntimeError) as error:
         bot.log_error(error, "Ошибка отправки обращения", message)
         await bot.reply_to(
@@ -86,23 +98,23 @@ async def handle_request(bot, message, dean_chat_id):
             reply_markup=application_questions_menu,
         )
     elif state == "application_photo":
-        if is_photo(message):
+        if is_document(message):
             await accept_request(bot, message, key, dean_chat_id)
             return
 
         await bot.reply_to(
             message,
-            "Нужно одно фото. Отправь изображение как фотографию, а не как файл или альбом:",
+            "Пришли один документ: фото, JPG, PNG или PDF до 10 МБ, без альбома:",
             reply_markup=back_menu,
         )
     elif state == "application_question":
-        if is_photo(message) and has_caption(message):
+        if is_document(message) and has_caption(message):
             await accept_request(bot, message, key, dean_chat_id)
             return
 
         await bot.reply_to(
             message,
-            "Нужно одно фото с вопросом в подписи. Фото и текст отправь одним сообщением:",
+            "Нужен один документ (фото, JPG, PNG или PDF до 10 МБ) с вопросом в подписи:",
             reply_markup=back_menu,
         )
     else:

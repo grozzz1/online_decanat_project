@@ -3,7 +3,7 @@ from io import BytesIO
 from utils import delivery
 from utils.bot import current_web_user
 from utils.keyboards import answer_web_student_menu
-from utils.ocr import recognize_text_async
+from utils.ocr import analyze_document_async
 from utils.users import get_name
 from .store import WebStore
 
@@ -76,13 +76,15 @@ class WebService:
                 await delivery.send_question(self.bot, self.dean_chat_id, user, item["text"], markup, "сайт")
             else:
                 with BytesIO(item["photo"]) as photo:
-                    recognized = await recognize_text_async(photo)
-                    self.store.update_request(request_id, recognized=recognized)
+                    analysis = await analyze_document_async(photo, item["application_type"])
+                    recognized = analysis["recognized"]
+                    self.store.update_request(request_id, recognized=recognized, visuals=analysis["visuals"],
+                                              validation=analysis["validation"], previews=analysis["previews"])
                     await self.audit(user_id, "Распознан текст фото", f"Обращение: {request_id}\n\n{recognized or 'Не удалось распознать текст.'}")
                     await delivery.send_application(
                         self.bot, self.dean_chat_id, user, photo, item["application_type"], recognized,
                         item["text"] if item["mode"] == "application_question" else None,
-                        markup, "сайт",
+                        markup, "сайт", visuals=analysis["visuals"], mimetype=item["mimetype"],
                     )
 
             self.store.mark_sent(request_id)

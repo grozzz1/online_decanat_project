@@ -33,7 +33,7 @@ class Bot(AsyncTeleBot):
         self.log_queue = Queue()
         self.log_task = None
         self.web = None
-        logger.disabled = True
+        logger.disabled = False
 
     def start_logs(self):
         self.log_task = create_task(self.send_logs())
@@ -43,6 +43,7 @@ class Bot(AsyncTeleBot):
         text = f"{datetime.now():%d.%m.%Y %H:%M:%S}\n{text}"
         text = text.replace(self.token, "[токен бота]")
         text = sub(r"(code=)[A-Za-z0-9_-]+", r"\1[код входа]", text)
+        print(text, flush=True)
         self.log_queue.put_nowait(text)
 
     @staticmethod
@@ -174,6 +175,11 @@ class Bot(AsyncTeleBot):
 
     async def send_photo(self, chat_id, photo, *args, **kwargs):
         sent = await super().send_photo(chat_id, photo, *args, **kwargs)
+        self.log_message("Бот → чат", sent)
+        return sent
+
+    async def send_document(self, chat_id, document, *args, **kwargs):
+        sent = await super().send_document(chat_id, document, *args, **kwargs)
         self.log_message("Бот → чат", sent)
         return sent
 

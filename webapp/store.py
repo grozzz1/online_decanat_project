@@ -80,6 +80,9 @@ class WebStore:
                 "mimetype": mimetype,
                 "status": "processing",
                 "recognized": "",
+                "visuals": None,
+                "validation": None,
+                "previews": [],
             }
             return request_id
 
@@ -113,7 +116,7 @@ class WebStore:
             return {
                 "messages": [dict(message) for message in self.messages[user_id] if message["id"] > after],
                 "requests": [
-                    {key: item[key] for key in ("id", "mode", "application_type", "status", "recognized")}
+                    {key: item[key] for key in ("id", "mode", "application_type", "status", "recognized", "visuals", "validation", "mimetype")}
                     for item in self.requests.values() if item["user_id"] == user_id
                 ],
             }
