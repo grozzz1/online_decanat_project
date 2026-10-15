@@ -1,9 +1,3 @@
-"""Conservative visual candidates, not authenticity checks or calibrated probabilities.
-
-Coordinates are [x1, y1, x2, y2] in the supplied RGB page, numbered from one.
-OCR words use the same coordinate frame. OpenCV preprocessing never changes OCR input.
-"""
-
 import re
 from difflib import SequenceMatcher
 from math import pi
@@ -27,14 +21,13 @@ def _matches(text, choices):
 
 
 def find_signature_anchors(words, width, height):
-    """Group OCR lines; explicit student/applicant + signature labels determine role."""
+
     lines = {}
     for word in words:
         if word.get("confidence", 0) >= 25:
             lines.setdefault(tuple(word.get("line", (0, 0, 0))), []).append(word)
     anchors = []
     for line in lines.values():
-        # Limit context to neighbouring words; unrelated labels on a wide row must not merge.
         line.sort(key=lambda word: word["bbox"][0])
         for index, word in enumerate(line):
             value = _normalized(word["text"])
@@ -120,7 +113,7 @@ def _stamp_candidates(rgb, ink, page):
     height, width = ink.shape
     hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
     preferred = cv2.inRange(hsv, (85, 45, 30), (165, 255, 245))
-    # Saturated red/green inks are also considered, with a lower colour bonus.
+
     coloured = cv2.inRange(hsv, (0, 55, 25), (179, 255, 245))
     detections = []
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
@@ -152,12 +145,12 @@ def _stamp_candidates(rgb, ink, page):
             inset = mask[y + h // 4 : y + 3 * h // 4, x + w // 4 : x + 3 * w // 4]
             interior = cv2.countNonZero(inset) / max(1, inset.size)
             density = cv2.countNonZero(mask[y : y + h, x : x + w]) / (w * h)
-            if density > 0.65:  # solid logos / coloured blobs
+            if density > 0.65:
                 continue
             blue = cv2.countNonZero(preferred[y : y + h, x : x + w]) / max(
                 1, cv2.countNonZero(mask[y : y + h, x : x + w])
             )
-            # Interior ink gives evidence of lettering or nested rings; plain circles remain uncertain.
+
             score = 0.20 + 0.18 * roundness + 0.18 * fit + 0.18 * min(1, interior / 0.08)
             score += (0.13 if blue > 0.5 else 0.07) if colour else 0
             if interior < 0.008:
@@ -177,7 +170,7 @@ def _stamp_candidates(rgb, ink, page):
                     },
                 )
             )
-    # Broken monochrome rings: Hough proposes circles, annular angular coverage verifies them.
+
     circles = cv2.HoughCircles(
         cv2.GaussianBlur(ink, (5, 5), 1),
         cv2.HOUGH_GRADIENT,
@@ -200,7 +193,7 @@ def _stamp_candidates(rgb, ink, page):
             ring = (distances > radius * 0.88) & (distances < radius * 1.10)
             angles = ((np.arctan2(dy[ring], dx[ring]) + pi) / (2 * pi) * 24).astype(int) % 24
             coverage = len(np.unique(angles)) / 24
-            # Text rows can fill every angular bin. A true rim also has radial edge normals.
+
             edge_y, edge_x = np.nonzero((gx[y1:y2, x1:x2] ** 2 + gy[y1:y2, x1:x2] ** 2) > 10000)
             edx, edy = edge_x + x1 - cx, edge_y + y1 - cy
             edge_radius = np.sqrt(edx**2 + edy**2)
@@ -234,15 +227,14 @@ def _signature_candidates(ink, words, stamps, anchors, page):
     vertical = cv2.morphologyEx(remaining, cv2.MORPH_OPEN, np.ones((max(25, height // 18), 1), np.uint8))
     rules = cv2.bitwise_or(horizontal, vertical)
     remaining[rules > 0] = 0
-    # Restore intersections locally, without restoring the entire blank rule.
+
     support = cv2.dilate(remaining, np.ones((5, 3), np.uint8))
     remaining[(rules > 0) & (support > 0)] = ink[(rules > 0) & (support > 0)]
     _, labels, ink_stats, _ = cv2.connectedComponentsWithStats(remaining, connectivity=8)
     for word in words:
         if word.get("confidence", 0) >= 55:
             x1, y1, x2, y2 = word["bbox"]
-            # OCR sometimes reads a piece of handwriting as a word. Preserve it
-            # only when an irregular connected stroke extends beyond that box.
+
             ids = np.unique(labels[max(0, y1) : y2, max(0, x1) : x2])
             text_height = max(1, y2 - y1)
             handwriting = any(
@@ -265,8 +257,7 @@ def _signature_candidates(ink, words, stamps, anchors, page):
     for stamp in stamps:
         x1, y1, x2, y2 = stamp["bbox"]
         remaining[y1:y2, x1:x2] = 0
-    # Group on the full page before applying contextual ROIs. Cropping first
-    # created partial candidates which could win deduplication over a full box.
+
     rois = [[0, 0, width, height]]
     detections = []
     for roi in rois:
@@ -278,7 +269,7 @@ def _signature_candidates(ink, words, stamps, anchors, page):
         contours, _ = cv2.findContours(grouped, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
-            # Dilation joins nearby components; its artificial border is not ink.
+
             yy, xx = np.nonzero(crop[y : y + h, x : x + w])
             if not len(xx):
                 continue
@@ -301,7 +292,7 @@ def _signature_candidates(ink, words, stamps, anchors, page):
             longest = max(stat[cv2.CC_STAT_WIDTH] for stat in components) / w
             heights = [stat[cv2.CC_STAT_HEIGHT] for stat in components]
             variation = float(np.std(heights) / max(1, np.mean(heights)))
-            # Separate regular glyphs, isolated characters, and line remnants are weak evidence.
+
             if not 0.025 < density < 0.42 or longest < 0.45:
                 continue
             occupied_rows = np.count_nonzero(np.count_nonzero(piece, axis=1) > 0) / h
@@ -320,7 +311,7 @@ def _signature_candidates(ink, words, stamps, anchors, page):
                 )
             )
             role = nearby[0]["role"] if nearby else "unknown"
-            # Conflicting labels cannot establish student ownership.
+
             if nearby and any(
                 a["role"] != role and _overlap(nearby[0]["bbox"], a["bbox"]) > 0.5 for a in nearby[1:]
             ):
@@ -389,7 +380,7 @@ def summarize_visuals(detections, pages, warnings=None):
 
 
 def analyze_document_visuals(image: Image.Image, ocr_words=None, page=1, debug_path=None) -> dict:
-    """Analyze one PIL RGB page independently; OCR is optional, role then remains unknown."""
+
     if not isinstance(image, Image.Image) or min(image.size) < 32:
         raise ValueError("Ожидается изображение PIL размером не меньше 32 × 32.")
     original_width, original_height = image.size
@@ -451,7 +442,7 @@ def save_debug_image(image, result, path, page=1):
         cv2.putText(canvas, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    # imencode + pathlib support non-ASCII Windows paths.
+
     ok, encoded = cv2.imencode(".png", canvas)
     if not ok:
         raise OSError("Не удалось сохранить отладочное изображение.")

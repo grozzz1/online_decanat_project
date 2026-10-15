@@ -1,14 +1,13 @@
 from utils.keyboards import (
     APPLICATION_QUESTION,
-    APPLICATION_QUESTIONS,
-    APPLICATIONS,
     BACK,
     DEAN_QUESTION,
     SEND_APPLICATION,
-    application_questions_menu,
-    applications_menu,
+    available_document_types,
     back_menu,
+    document_menu,
     main_menu,
+    miniapp_menu,
 )
 from utils.states import application_types, clear_state, states
 from utils.validation import is_text
@@ -36,6 +35,10 @@ async def handle_menu(bot, message):
             reply_markup=main_menu,
             disable_web_page_preview=True,
         )
+        if command == "/start" and (markup := miniapp_menu()) is not None:
+            await bot.send_message(
+                message.chat.id, "Личный кабинет доступен прямо в Telegram:", reply_markup=markup
+            )
     elif text == DEAN_QUESTION:
         clear_state(key)
         states[key] = "dean_question"
@@ -50,7 +53,7 @@ async def handle_menu(bot, message):
         await bot.send_message(
             message.chat.id,
             "Выбери тип документа:",
-            reply_markup=applications_menu,
+            reply_markup=document_menu(bot, "application"),
         )
     elif text == APPLICATION_QUESTION:
         clear_state(key)
@@ -58,9 +61,11 @@ async def handle_menu(bot, message):
         await bot.send_message(
             message.chat.id,
             "Выбери документ, по которому хочешь задать вопрос:",
-            reply_markup=application_questions_menu,
+            reply_markup=document_menu(bot, "application_question"),
         )
-    elif states.get(key) == "application_type" and text in APPLICATIONS:
+    elif states.get(key) == "application_type" and text in [
+        item["label"] for item in available_document_types(bot, "application")
+    ]:
         application_types[key] = text
         states[key] = "application_photo"
         await bot.send_message(
@@ -68,7 +73,9 @@ async def handle_menu(bot, message):
             f"{text}. Пришли фото документа или файл JPG, PNG, PDF до 10 МБ:",
             reply_markup=back_menu,
         )
-    elif states.get(key) == "application_question_type" and text in APPLICATION_QUESTIONS:
+    elif states.get(key) == "application_question_type" and text in [
+        item["label"] for item in available_document_types(bot, "application_question")
+    ]:
         application_types[key] = text
         states[key] = "application_question"
         await bot.send_message(

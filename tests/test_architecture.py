@@ -1,5 +1,3 @@
-"""Guard service boundaries and module cycles, including deferred imports."""
-
 import ast
 import unittest
 from pathlib import Path

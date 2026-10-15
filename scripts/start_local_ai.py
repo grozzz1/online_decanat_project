@@ -1,15 +1,15 @@
-"""Run one portable llama.cpp server on loopback; Ctrl+C stops it."""
-
 import argparse
 import json
+import platform
 import subprocess
 import sys
-from os import getenv
+from os import environ, getenv
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.setup_local_ai import MODEL
+from utils.config import get_ai_state_directory
 from utils.local_ai import get_local_ai
 
 
@@ -18,7 +18,8 @@ def start(gpu=False, threads=4):
     if client.health()["available"]:
         print("A local AI server is already listening; no second model copy started.")
         return 0
-    engines = list((ROOT / "tools" / "llama.cpp" / ("vulkan" if gpu else "cpu")).rglob("llama-server.exe"))
+    filename = "llama-server.exe" if platform.system() == "Windows" else "llama-server"
+    engines = list((ROOT / "tools" / "llama.cpp" / ("vulkan" if gpu else "cpu")).rglob(filename))
     model = Path(getenv("LOCAL_AI_MODEL_PATH") or str(ROOT / "models" / MODEL))
     if not engines or not model.exists():
         raise SystemExit("Run python scripts/setup_local_ai.py first (with --gpu for Vulkan).")
@@ -49,7 +50,7 @@ def start(gpu=False, threads=4):
         "off",
         "--no-ui",
     ]
-    runtime = ROOT / ".local_ai" / "runtime.json"
+    runtime = get_ai_state_directory() / "runtime.json"
     runtime.parent.mkdir(parents=True, exist_ok=True)
     runtime.write_text(
         json.dumps(
@@ -65,7 +66,11 @@ def start(gpu=False, threads=4):
         encoding="utf-8",
     )
     try:
-        return subprocess.call(arguments, cwd=ROOT)
+        environment = dict(environ)
+        if platform.system() == "Linux":
+            libraries = [str(engines[0].parent), str(engines[0].parent.parent / "lib")]
+            environment["LD_LIBRARY_PATH"] = ":".join(libraries + [environment.get("LD_LIBRARY_PATH", "")])
+        return subprocess.call(arguments, cwd=ROOT, env=environment)
     except KeyboardInterrupt:
         return 0
 
@@ -73,6 +78,6 @@ def start(gpu=False, threads=4):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--gpu", action="store_true")
-    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--threads", type=int, default=int(getenv("LOCAL_AI_THREADS", "2")))
     args = parser.parse_args()
     raise SystemExit(start(args.gpu, args.threads))

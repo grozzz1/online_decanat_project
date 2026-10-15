@@ -1,5 +1,3 @@
-"""Keep staff correspondence separate from automatic document checks."""
-
 import unittest
 from io import BytesIO
 from types import SimpleNamespace

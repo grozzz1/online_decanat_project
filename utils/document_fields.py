@@ -1,5 +1,3 @@
-"""Document schemas and conservative extraction from OCR, without inferred values."""
-
 import re
 import unicodedata
 from datetime import date
@@ -111,7 +109,7 @@ DATE_RE = re.compile(DATE_PATTERN, re.I)
 
 def normalize_date(value):
     value = re.sub(r"[«»\"']", "", value.strip().lower())
-    # Restrict OCR digit substitutions to numeric date segments, not month names.
+
     value = re.sub(
         r"(?<![a-zа-яё])[0-9оoilі]+(?![a-zа-яё])",
         lambda m: m[0].translate(str.maketrans({"о": "0", "o": "0", "i": "1", "l": "1", "і": "1"})),
@@ -132,7 +130,6 @@ def normalize_date(value):
         return None
 
 
-# Label aliases are scoped to their document type. Unlabelled dates are never guessed.
 ALIASES = {
     "student_name": r"(?:Ф\s*\.?\s*И\s*\.?\s*О\s*\.?|Фамилия[ ,]+имя[ ,]+отчество|ФИО\s+студента|ФИО\s+обучающегося|Студент(?:ка)?|Обучающийся|Обучающаяся)",
     "university": r"(?:(?:Название|Наименование)\s+(?:вуза|университета|образовательной\s+организации)|Учебное\s+заведение|ВУЗ|Университет)",
@@ -159,7 +156,7 @@ INLINE_LABEL = re.compile(r"(?<!\w)(?:" + "|".join(ALIASES.values()) + r")\s*[:�
 
 
 def _label_values(text, alias, multiline=False):
-    # Colon/dash labels may continue on the next line. Stop at the next labelled field.
+
     pattern = re.compile(rf"(?:^|[;\n])\s*(?:{alias})\s*[:—–-][ \t]*([^\n;]*)", re.I)
     lines = text.splitlines()
     values = []
@@ -167,7 +164,7 @@ def _label_values(text, alias, multiline=False):
         value = match[1].strip()
         index = text[: match.end()].count("\n")
         name_field = alias in (ALIASES["student_name"], ALIASES["supervisor_name"])
-        # Continue wrapped values until a label, blank line or new sentence/period.
+
         for following in lines[index + 1 : index + 4]:
             if (
                 not following
@@ -197,7 +194,7 @@ FULL_NAME = re.compile(rf"(?:{NAME}\s+){{1,2}}{NAME}", re.I)
 def _name(value):
     value = re.sub(r"^(?:студент[ау]?|студентки|обучающемуся|обучающейся)\s+", "", value, flags=re.I)
     value = value.strip(" .,:;_()")
-    # A person field must consist of a name, not the rest of a sentence or a form label.
+
     if value.casefold() in ("фамилия имя отчество", "фио студента", "не указано", "нет данных"):
         return None
     if set(value.casefold().split()) & {
@@ -239,7 +236,6 @@ def _date_values(text, field):
     values = []
     alias = ALIASES[field]
     for match in re.finditer(rf"(?:{alias})\s*[:—–-]?\s*({DATE_PATTERN})", text, re.I):
-        # Generic 'Дата' in applications is valid only as a label at the line start.
         if field == "application_date" and match[0].lower().startswith("дата"):
             prefix = text[: match.start()].rsplit("\n", 1)[-1].strip()
             if prefix or re.match(r"Дата\s+(?:начала|окончания|рождения|выдачи)", match[0], re.I):
@@ -259,7 +255,6 @@ def _period_values(text, document_type):
         rf"\bс\s*({DATE_PATTERN})\s*(?:г(?:ода|\.)?)?\s*(?:по|до|[—–-])\s*({DATE_PATTERN})", re.I
     )
     for match in pattern.finditer(text):
-        # Require the domain on the same sentence/label immediately preceding the range.
         prefix = text[max(0, match.start() - 130) : match.start()]
         segments = re.split(r"[;\n]", prefix)
         prefix = segments[-1] or (segments[-2] if len(segments) > 1 else "")
@@ -291,10 +286,11 @@ def _visual_value(field, visuals):
 
 
 def empty_extraction(document_type, errors=None):
-    key = normalize_document_type(document_type)
+    custom = isinstance(document_type, str) and document_type.startswith("custom_")
+    key = document_type if custom else normalize_document_type(document_type)
     if not key:
         raise ValueError("Неподдерживаемый тип документа.")
-    schema = DOCUMENT_SCHEMAS[key]
+    schema = DOCUMENT_SCHEMAS.get(key, {"label": "Пользовательский документ", "fields": {}})
     return {
         "document_type": key,
         "document_label": schema["label"],
@@ -356,7 +352,7 @@ def extract_document_fields(text, document_type, visuals=None):
                 values = _date_values(text, field)
                 if field in period:
                     values += [pair[period.index(field)] for pair in pairs]
-                # Standard certificate header: 'Справка № ... от <date>'.
+
                 if field == "issue_date":
                     values += [
                         normalize_date(m[1])

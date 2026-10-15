@@ -2,11 +2,12 @@
 <html lang="ru">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Онлайн-деканат</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+    {% if telegram_mini_app %}<script src="https://telegram.org/js/telegram-web-app.js"></script>{% endif %}
 </head>
 <body>
     <div class="app-shell">
@@ -60,7 +61,7 @@
                             <div class="field" id="document-type-field" hidden>
                                 <label for="document-type">Тип документа</label>
                                 <select id="document-type" name="application_type">
-                                    {% for key, schema in document_schemas.items() %}<option value="{{ key }}" {% if key == 'academic_leave_application' %} selected{% endif %}>{{ schema.label }}</option>{% endfor %}
+                                    {% for item in document_types %}<option value="{{ item.key }}" data-modes="{{ item.modes|join(',') }}" {% if item.key == 'academic_leave_application' %} selected{% endif %}>{{ item.label }}</option>{% endfor %}
                                 </select>
                             </div>
                             <div class="field" id="upload-field" hidden>

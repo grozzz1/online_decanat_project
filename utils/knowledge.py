@@ -1,5 +1,3 @@
-"""Small local BM25 index with stable clause citations, persisted outside source files."""
-
 import hashlib
 import json
 import math
@@ -11,6 +9,8 @@ from os import getenv
 from pathlib import Path
 from threading import RLock
 
+from utils.config import get_ai_state_directory
+
 ROOT = Path(__file__).resolve().parents[1]
 STOP = set(
     "и в во на по к с со из за о об от до для не ли как какой какая какое какие это или а но что есть указан указана указано укажи значение поля документ документе документу документа положению положения все содержит".split()
@@ -18,7 +18,7 @@ STOP = set(
 
 
 def tokens(text):
-    # Lightweight Russian stems; no downloaded dictionaries or remote embeddings.
+
     words = re.findall(r"[а-яёa-z0-9]+", text.casefold().replace("ё", "е"))
     return [word[:6] if len(word) > 6 else word for word in words if word not in STOP and len(word) > 1]
 
@@ -89,7 +89,7 @@ def split_clauses(path, text):
 class KnowledgeIndex:
     def __init__(self, paths=None, index_path=None):
         self.paths = list(paths or [ROOT / "rules.md"])
-        self.index_path = Path(index_path or ROOT / ".local_ai" / "knowledge.json")
+        self.index_path = Path(index_path or get_ai_state_directory() / "knowledge.json")
         self.lock = RLock()
         self.fingerprint = None
         self.chunks = {}

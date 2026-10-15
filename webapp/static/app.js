@@ -1,7 +1,9 @@
 const $ = (id) => document.getElementById(id);
+window.Telegram?.WebApp?.ready();
+window.Telegram?.WebApp?.expand();
 const navButtons = Array.from(document.querySelectorAll("[data-mode]"));
-const allDocumentTypes = Array.from($("document-type").options, (option) => ({
-    value: option.value, label: option.textContent,
+let allDocumentTypes = Array.from($("document-type").options, (option) => ({
+    value: option.value, label: option.textContent, modes: option.dataset.modes.split(","),
 }));
 const descriptions = {
     question: ["Вопрос деканату", "Напиши свой вопрос. Ответ преподавателя появится здесь, в чате."],
@@ -29,6 +31,7 @@ let editingType = false;
 let actionInFlight = false;
 let aiSubmitting = false;
 let messageHistory = [];
+let dialogUrl = null;
 const fieldLabels = {
     student_name: "ФИО студента", university: "Название вуза", program: "Направление подготовки",
     study_form: "Форма обучения", study_start: "Начало обучения", study_end: "Окончание обучения",
@@ -73,17 +76,22 @@ function setBusy(value) {
     $("send-request").textContent = value ? "Обрабатываем…" : mode === "application" ? "📝 Отправить заявление" : mode === "application_question" ? "Задать вопрос" : "✉ Отправить вопрос";
 }
 
+function renderDocumentTypes() {
+    const selectedType = $("document-type").value;
+    const types = allDocumentTypes.filter((item) => mode === "question" || item.modes.includes(mode));
+    $("document-type").replaceChildren(...types.map((item) => new Option(item.label, item.value)));
+    $("document-type").value = types.some((item) => item.value === selectedType) ? selectedType : types.some((item) => item.value === "academic_leave_application") ? "academic_leave_application" : types[0]?.value || "";
+}
+
 function setMode(value, audit = true) {
     if (!descriptions[value]) return;
     if (mode !== value) {
         reviewRequestId = null;
         viewerPinned = false;
+        editingType = false;
     }
     mode = value;
-    const selectedType = $("document-type").value;
-    const types = allDocumentTypes;
-    $("document-type").replaceChildren(...types.map((item) => new Option(item.label, item.value)));
-    $("document-type").value = types.some((item) => item.value === selectedType) ? selectedType : "academic_leave_application";
+    renderDocumentTypes();
     sessionStorage.setItem("decanat-mode", mode);
     const isQuestion = mode === "question";
     $("workspace").classList.toggle("is-question", isQuestion);
@@ -106,6 +114,8 @@ function setMode(value, audit = true) {
     });
     showError("");
     renderHistory();
+    const latestDocument = [...requestsById.values()].reverse().find((item) => item.mode === mode && item.mode !== "question");
+    if (latestDocument && !selectedFile) showDocument(latestDocument);
     setBusy(busy);
     if (audit) api("/api/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) }).catch((error) => showError(error.message));
 }
@@ -255,7 +265,8 @@ function showFieldResults(item) {
         if (check.missing_fields.length) parts.push(`Не найдены обязательные реквизиты: ${labels(check.missing_fields)}.`);
         if (check.unknown_fields.length) parts.push(`Не удалось проверить: ${labels(check.unknown_fields)}.`);
         if (check.status === "document_ok") parts.push("Документ содержит все обязательные сведения.");
-        parts.push(`Пункты Положения: ${check.sources.map((source) => source.replace("rule:", "")).join(", ")}.`);
+        if (check.sources.length) parts.push(`Пункты Положения: ${check.sources.map((source) => source.replace("rule:", "")).join(", ")}.`);
+        else parts.push("Для этого типа документа автоматические правила ещё не заданы.");
         parts.push("Это предварительная проверка. Окончательное решение примет сотрудник деканата.");
         $("validation-summary").textContent = parts.join(" ");
     }
@@ -395,6 +406,41 @@ function chooseFile(file) {
     showError("");
 }
 
+async function openMessagePhoto(message, body) {
+    try {
+        const response = await fetch(`/api/messages/${message.id}/photo`, { credentials: "same-origin" });
+        if (!response.ok) {
+            const result = await response.json();
+            throw new Error(result.error || "Не удалось открыть вложение.");
+        }
+        const blob = await response.blob();
+        const item = requestsById.get(message.request_id);
+        if (item && !item.photo_expired) {
+            clearFile();
+            setMode(item.mode, false);
+            viewerPinned = true;
+            showDocument(item);
+            $("preview-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
+        } else {
+            if (dialogUrl) URL.revokeObjectURL(dialogUrl);
+            dialogUrl = URL.createObjectURL(blob);
+            if (blob.type.startsWith("image/")) {
+                $("dialog-photo").src = dialogUrl;
+                $("photo-dialog").showModal();
+            } else {
+                const link = document.createElement("a");
+                link.href = dialogUrl;
+                link.download = message.media_tag || "document.pdf";
+                link.click();
+            }
+        }
+    } catch (error) {
+        let notice = body.querySelector(".expired-photo");
+        if (!notice) { notice = document.createElement("p"); notice.className = "expired-photo"; body.append(notice); }
+        notice.textContent = error.message;
+    }
+}
+
 function addMessage(message) {
     const request = requestsById.get(message.request_id);
     if (request && request.mode !== mode) return;
@@ -414,15 +460,7 @@ function addMessage(message) {
         button.type = "button";
         button.setAttribute("aria-label", "Посмотреть документ и результаты анализа");
         button.textContent = "📄 Посмотреть документ";
-        button.addEventListener("click", () => {
-            const item = requestsById.get(message.request_id);
-            if (!item || busy) return;
-            clearFile();
-            viewerPinned = true;
-            setMode(item.mode, false);
-            showDocument(item);
-            $("preview-card").scrollIntoView({ behavior: "smooth", block: "nearest" });
-        });
+        button.addEventListener("click", () => { if (!busy) openMessagePhoto(message, body); });
         body.append(button);
     }
     body.append(document.createTextNode(message.text));
@@ -449,6 +487,10 @@ async function poll() {
     try {
         const result = await api(`/api/messages?after=${lastMessage}`);
         requestsById = new Map(result.requests.map((item) => [item.id, item]));
+        if (result.document_types) {
+            const types = result.document_types.map((item) => ({ value: item.key, label: item.label, modes: item.modes }));
+            if (JSON.stringify(types) !== JSON.stringify(allDocumentTypes)) { allDocumentTypes = types; renderDocumentTypes(); }
+        }
         messageHistory.push(...result.messages);
         if (result.messages.length) lastMessage = result.messages.at(-1).id;
         if (result.messages.length) renderHistory();
@@ -500,7 +542,7 @@ $("change-document-type").addEventListener("click", () => {
     setBusy(false);
     const select = $("document-type");
     select.focus();
-    try { select.showPicker?.(); } catch (_) { /* Focus remains available. */ }
+    try { select.showPicker?.(); } catch (_) {}
 });
 $("document-type").addEventListener("change", async () => {
     if (busy || !reviewRequestId) return;
@@ -530,6 +572,7 @@ document.addEventListener("click", (event) => {
 $("logout").addEventListener("click", async () => {
     try {
         await api("/api/logout", { method: "POST" });
+        if (window.Telegram?.WebApp?.initData) { window.Telegram.WebApp.close(); return; }
         window.location.replace("/login");
     } catch (error) { showError(error.message); }
 });

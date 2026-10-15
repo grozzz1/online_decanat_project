@@ -1,8 +1,6 @@
-"""Browser smoke test: user-visible provenance, grounded answer and retained document."""
-
 from threading import Thread
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 
 from tests.fixtures import encoded, page
@@ -24,7 +22,8 @@ def run():
             errors = []
             tab.on("pageerror", lambda error: errors.append(str(error)))
             tab.goto(f"{base}/login?code={code}")
-            tab.locator('[data-mode="application"]').click()
+            tab.locator('[data-mode="application_question"]').click()
+            tab.locator("#question").fill("Какой курс указан в документе?")
             data = encoded(page(signature=True)[0])
             tab.locator("#document").set_input_files(
                 {"name": "document.png", "mimeType": "image/png", "buffer": data}
@@ -34,12 +33,14 @@ def run():
             ) as response:
                 tab.locator("#send-request").click()
             request_id = response.value.json()["request_id"]
-            tab.locator("#ai-panel").wait_for(state="visible")
+            tab.wait_for_function(
+                "() => !busy && document.getElementById('ai-answer').textContent.includes('field:course')"
+            )
             tab.locator("#field-card > summary").click()
-            assert "из текста" in tab.locator("#field-results").inner_text()
-            tab.locator("#ai-question").fill("Какой курс указан в документе?")
+            expect(tab.locator("#field-results")).to_contain_text("Найдено: 2")
+            tab.locator("#question").fill("Какой курс указан в документе?")
             with tab.expect_response(lambda r: r.url.endswith("/ask")) as response:
-                tab.locator("#ask-ai").click()
+                tab.locator("#send-request").click()
             assert response.value.status == 202
             tab.wait_for_function(
                 "() => document.getElementById('ai-answer').textContent.includes('field:course')"
@@ -52,15 +53,15 @@ def run():
             assert tab.request.get(f"{base}/api/requests/{request_id}/photo").body() == data
             tab.set_viewport_size({"width": 520, "height": 1000})
             tab.screenshot(path=".tmp/local-ai-mobile.png", full_page=True)
-            tab.locator("#ai-question").fill("Какова стоимость обучения?")
-            tab.locator("#ask-ai").click()
+            tab.locator("#question").fill("Какова стоимость обучения?")
+            tab.locator("#send-request").click()
             tab.wait_for_function(
                 "() => document.getElementById('ai-answer').textContent.includes('нет информации')"
             )
             assert not errors, errors
             browser.close()
         print(
-            "Browser AI OK: provenance, Python answer, citations, refusal, retained file and mobile layout."
+            "Browser AI OK: extracted fields, Python answer, citations, refusal, retained file and mobile layout."
         )
     finally:
         server.shutdown()

@@ -1,5 +1,3 @@
-"""Two phases: `run` never reads reference answers; `report` only compares saved predictions."""
-
 import argparse
 import hashlib
 import json
@@ -118,7 +116,7 @@ def csv_file(path, rows):
 
 
 def report(args):
-    # Reference access is deliberately restricted to this post-processing command.
+
     references = {item["document_id"]: item for item in load(args.reference)["documents"]}
     predictions = {item["document_id"]: item for item in load(args.output / "results.json")["documents"]}
     if set(references) != set(predictions):
@@ -289,7 +287,9 @@ def report(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description="Two phases: `run` never reads reference answers; `report` only compares saved predictions."
+    )
     commands = parser.add_subparsers(dest="command", required=True)
     process = commands.add_parser("run")
     process.add_argument("--dataset", type=Path, required=True)

@@ -5,12 +5,41 @@ from telebot import util
 from utils.bot import current_callback, current_message
 from utils.states import dean_replies
 
-from . import dean, menu, requests
+from . import dean, menu, requests, types
 
 locks = {}
 
 
 def register_handlers(bot, dean_chat_id):
+    @bot.message_handler(
+        commands=["add_type", "remove_type", "types"],
+        func=lambda message: message.chat.id == dean_chat_id and message.from_user is not None,
+        chat_types=["group", "supergroup"],
+    )
+    async def receive_type_command(message):
+        key = (message.chat.id, message.from_user.id)
+        async with locks.setdefault(key, Lock()):
+            try:
+                await types.command(bot, message)
+            except ValueError as error:
+                await bot.reply_to(message, str(error))
+
+    @bot.callback_query_handler(
+        func=lambda call: (
+            call.message is not None
+            and call.message.chat.id == dean_chat_id
+            and bool(call.data)
+            and call.data.startswith("doctype:")
+        )
+    )
+    async def receive_type_callback(call):
+        key = (call.message.chat.id, call.from_user.id)
+        async with locks.setdefault(key, Lock()):
+            try:
+                await types.callback(bot, call)
+            except ValueError as error:
+                await bot.answer_callback_query(call.id, str(error), show_alert=True)
+
     @bot.callback_query_handler(
         func=lambda call: (
             call.message is not None
@@ -73,9 +102,11 @@ def register_handlers(bot, dean_chat_id):
 
         async with locks.setdefault(key, Lock()):
             token = current_message.set(message)
-            bot.log_message("Пользователь → бот", message)
 
             try:
+                if getattr(type(bot), "archive_message", None) is not None:
+                    await bot.archive_message(message, incoming=True)
+                bot.log_message("Пользователь → бот", message)
                 if await menu.handle_menu(bot, message):
                     return
 

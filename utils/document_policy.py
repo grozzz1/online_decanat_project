@@ -1,5 +1,3 @@
-"""Preliminary completeness under the supplied fictional rules.md, sections 3–6."""
-
 import re
 
 from utils.document_fields import ALIASES, DOCUMENT_SCHEMAS, VISUAL_FIELDS
@@ -13,6 +11,15 @@ PUBLIC_FIELDS = {
 
 
 def preliminary_check(extraction: dict) -> dict:
+    if not extraction or extraction.get("document_type") not in SECTIONS:
+        return {
+            "status": "unknown",
+            "missing_fields": [],
+            "unknown_fields": [],
+            "sources": [],
+            "required_fields": [],
+            "preliminary_only": True,
+        }
     section = SECTIONS[extraction["document_type"]]
     statuses = extraction["field_statuses"]
     missing = [name for name, status in statuses.items() if status == "missing"]
@@ -34,12 +41,11 @@ def preliminary_check(extraction: dict) -> dict:
 
 
 def export_fields(extraction: dict) -> dict:
-    """Official schema adapter. Internal unknowns remain null; export must use bool/string."""
+
     result = {}
     for name, value in extraction["fields"].items():
         public = PUBLIC_FIELDS.get(name, name)
-        # The official schema cannot express uncertain visual findings. Export conservatively
-        # as false, and expose these unknowns separately in the benchmark report/raw results.
+
         result[public] = (
             bool(value) if name in VISUAL_FIELDS else "не найдено" if value is None else str(value)
         )
@@ -58,7 +64,7 @@ def export_validation(extraction: dict) -> dict:
 
 
 def answer_question_python(question: dict, extraction: dict) -> dict:
-    """Deterministic answers using extracted fields and the supplied rules, never references."""
+
     text = question["question"].casefold().replace("ё", "е")
     fields = export_fields(extraction)
     validation = export_validation(extraction)

@@ -1,5 +1,3 @@
-"""Status-only document reports; never include OCR text, field values or exception messages."""
-
 import logging
 
 from utils.document_fields import empty_extraction
@@ -19,7 +17,7 @@ def extraction_counts(result):
     }
 
 
-def format_document_report(result, source):
+def format_document_report(result, source, *, include_values=False):
     counts = extraction_counts(result)
     labels = {
         "found": ("OK", "найдено"),
@@ -43,7 +41,9 @@ def format_document_report(result, source):
         ]
     for name, status in result["field_statuses"].items():
         marker, description = labels[status]
-        lines.append(f"[{marker}] {name} — {description}")
+        value = result["fields"].get(name)
+        detail = f": {value}" if include_values and status == "found" and value is not None else ""
+        lines.append(f"[{marker}] {name} — {description}{detail}")
     lines += [
         f"Найдено полей: {counts['found']}/{counts['expected']}",
         "Найденные поля: "
@@ -53,7 +53,7 @@ def format_document_report(result, source):
         "Отсутствует: " + (", ".join(counts["missing"]) or "нет"),
         "Не удалось проверить: " + (", ".join(counts["unknown"]) or "нет"),
     ]
-    # Error dictionaries are constructed in our code using stage names and exception class names.
+
     for error in result.get("errors", []):
         lines.append(f"[ERROR] {error['stage']}: {error['code']}")
     lines.append("=========================================")
@@ -71,7 +71,7 @@ def log_document_result(result, sink=None, source="telegram"):
     )
     report = format_document_report(result, source)
     logger.log(level, "%s", report)
-    # Keep the existing Telegram admin-log queue and its redaction policy.
+
     if sink is not None:
         sink(f"{logging.getLevelName(level)}\n{report}")
 

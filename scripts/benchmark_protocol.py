@@ -1,5 +1,3 @@
-"""Fingerprint measured code and inputs without reading reference answers."""
-
 import hashlib
 import json
 import subprocess
@@ -28,10 +26,9 @@ SOURCE_FILES = (
 
 
 def fingerprint(inputs, configuration, *, root=ROOT):
-    """Each stage freezes this key once; individual QA records also hash their fields."""
+
     digest = hashlib.sha256()
     for name in SOURCE_FILES:
-        # Git on Windows may check out CRLF; line endings alone do not change a protocol.
         digest.update(name.encode("utf-8") + b"\0")
         digest.update((root / name).read_bytes().replace(b"\r\n", b"\n") + b"\0")
     for path in inputs:
@@ -49,7 +46,7 @@ def runtime_settings(client):
     model = json.loads(installation.read_text(encoding="utf-8")) if installation.exists() else {}
     active = json.loads(runtime.read_text(encoding="utf-8")) if runtime.exists() else {}
     arguments = active.get("arguments", [])[1:]
-    # Machine-specific executable/model paths are not model parameters.
+
     flags = [
         value
         for i, value in enumerate(arguments)

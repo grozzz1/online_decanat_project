@@ -1,5 +1,3 @@
-"""Regex stays authoritative; only missing textual fields are eligible for Qwen recovery."""
-
 import logging
 import re
 from copy import deepcopy
@@ -116,7 +114,7 @@ def field_schema(names):
 
 
 def verify_field(name, proposal, text, extraction):
-    """Return (value, evidence, rejection). Correct JSON alone is never evidence."""
+
     if proposal is None:
         return None, None, None
     value, quote = proposal["value"], proposal["quote"]
@@ -147,7 +145,7 @@ def verify_field(name, proposal, text, extraction):
             pairs = _period_values(quote, extraction["document_type"])
             if name not in period or not pairs or {pair[period.index(name)] for pair in pairs} != {value}:
                 return None, None, "date_not_uniquely_bound"
-        # Reject a period date whose label belongs to another date field.
+
         other_date_labels = [
             other
             for other in ALIASES
@@ -229,8 +227,8 @@ def supplement_fields(extraction, ocr_text, client=None):
         if not Draft202012Validator(field_schema(names)).is_valid(proposal):
             raise AIError("json_schema")
         diagnostics["returned_fields"] = [name for name in names if proposal[name] is not None]
-        diagnostics["proposals"] = proposal  # Private per-document result, never included in logs.
-        # Validate against a frozen snapshot first, so generated fields cannot validate each other.
+        diagnostics["proposals"] = proposal
+
         verified = {}
         for name in names:
             value, evidence, rejection = verify_field(name, proposal[name], ocr_text, extraction)

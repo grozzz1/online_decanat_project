@@ -3,7 +3,7 @@ from io import BytesIO
 
 from utils import delivery
 from utils.bot import current_web_user
-from utils.document_fields import document_label, empty_extraction, normalize_document_type
+from utils.document_fields import document_label, empty_extraction
 from utils.document_logging import log_document_failure, log_document_result
 from utils.document_policy import preliminary_check
 from utils.keyboards import answer_web_student_menu
@@ -15,11 +15,11 @@ from .store import WebStore
 
 
 class WebService:
-    def __init__(self, bot, loop, dean_chat_id):
+    def __init__(self, bot, loop, dean_chat_id, storage=None):
         self.bot = bot
         self.loop = loop
         self.dean_chat_id = dean_chat_id
-        self.store = WebStore()
+        self.store = WebStore(storage)
         self.locks = {}
         self.tasks = set()
 
@@ -44,7 +44,9 @@ class WebService:
         self.bot.write_log(
             f"Создана ссылка для входа на сайт\nПользователь: {get_name(user)}\nID пользователя: {user.id}"
         )
-        return f"http://localhost:5000/login?code={code}"
+        from utils.config import get_public_base_url
+
+        return f"{get_public_base_url()}/login?code={code}"
 
     async def audit(self, user_id, action, text=""):
         user = self.store.get_user(user_id)
@@ -72,9 +74,10 @@ class WebService:
                 raise ValueError("Прикрепи один документ JPG, PNG или PDF.")
             if mode == "application":
                 text = ""
-            if normalize_document_type(application_type) is None:
+            selected = self.store.types.resolve(application_type, mode)
+            if selected is None:
                 raise ValueError("Выбери поддерживаемый тип документа.")
-            application_type = document_label(application_type)
+            application_type = selected["label"]
         async with self.locks.setdefault(user_id, Lock()):
             snapshot = self.store.snapshot(user_id)
 
@@ -118,9 +121,10 @@ class WebService:
         self.store.update_request(request_id, **changes)
 
     async def change_type(self, user_id, request_id, selected, mode, text):
-        selected = normalize_document_type(selected)
-        if selected is None or mode not in ("application", "application_question"):
+        entry = self.store.types.resolve(selected, mode)
+        if entry is None or mode not in ("application", "application_question"):
             raise ValueError("Выбери поддерживаемый тип документа и раздел.")
+        selected = entry["key"]
         if not isinstance(text, str) or len(text) > 4096 or text.lstrip().startswith("/"):
             raise ValueError("Вопрос должен быть обычным текстом до 4096 символов.")
         if mode == "application_question" and not text.strip():
@@ -145,7 +149,8 @@ class WebService:
             self.save_analysis(request_id, analysis)
             self.store.update_request(
                 request_id,
-                application_type=document_label(selected),
+                application_type=entry["label"],
+                custom_type=entry["custom"],
                 mode=mode,
                 type_mismatch_confirmed=False,
                 text=text if mode == "application_question" else "",
@@ -158,6 +163,10 @@ class WebService:
             item = self.store.get_request(user_id, request_id)
             if item is None:
                 raise LookupError("Обращение не найдено.")
+            if item.get("photo_tag") and item["photo"] is None:
+                from utils.storage import MEDIA_EXPIRED
+
+                raise ValueError(MEDIA_EXPIRED + " Прикрепи документ заново.")
             retry = item["status"] == "failed" and item["retry_allowed"]
             if item["status"] != "needs_review" and not retry:
                 raise ValueError("Документ уже отправлен или ещё обрабатывается.")
@@ -246,14 +255,15 @@ class WebService:
                         self.store.update_request(request_id, status="checked")
                         await self.answer_ai(user_id, request_id, item["text"])
                         return
-                    recognized = item["recognized"]
                     await delivery.send_application(
                         self.bot,
                         self.dean_chat_id,
                         user,
                         photo,
-                        document_label(item["document_type"]),
-                        recognized,
+                        item["application_type"]
+                        if item.get("custom_type")
+                        else document_label(item["document_type"]),
+                        item["extraction"],
                         item["text"] if item["mode"] == "application_question" else None,
                         markup,
                         "сайт",
@@ -275,7 +285,7 @@ class WebService:
             retry_allowed = (
                 bool(item.get("visuals")) and bool(item.get("extraction")) and not progress.get("uncertain")
             )
-            # A successful Telegram receipt is final even if subsequent logging fails.
+
             if progress.get("complete"):
                 self.store.mark_sent(request_id)
                 return
@@ -296,6 +306,7 @@ class WebService:
             self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", text)
         finally:
+            self.store.update_request(request_id, delivery_progress=item.get("delivery_progress", {}))
             current_web_user.reset(token)
 
     async def deliver_reply(self, request_id, text):
@@ -338,7 +349,6 @@ class WebService:
             self.store.update_request(request_id, ai_status="done", ai_answer=answer)
             self.store.add_message(user_id, "ai", format_answer(answer), request_id)
         except Exception as error:
-            # AI failure must never change the delivery state or expose document content in logs.
             self.store.update_request(request_id, ai_status="failed")
             self.store.add_message(
                 user_id,

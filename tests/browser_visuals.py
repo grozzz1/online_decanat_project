@@ -1,11 +1,9 @@
-"""Optional browser check against a local Flask instance; never contacts Telegram."""
-
 from io import BytesIO
 from pathlib import Path
 from threading import Thread
 from unittest.mock import patch
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from werkzeug.serving import make_server
 
 from tests.fixtures import TEXTS, encoded, page
@@ -23,7 +21,7 @@ def run():
         response = fixture.upload(encoded(image), "document.png")
         fixture.finish_processing()
         request_id = response.json["request_id"]
-        # Include controlled OCR coordinates to test both confirmed overlay colours.
+
         visuals = analyze_document_visuals(image, words)
         fixture.service.store.update_request(request_id, visuals=visuals)
         first, _ = page(stamp=True)
@@ -51,17 +49,15 @@ def run():
             )
             tab.goto(f"{base}/login?code={code}")
             tab.locator('[data-mode="application"]').click()
-            assert tab.locator("#document-type option").count() == 2
-            assert tab.locator("#document-type").input_value() == "academic_leave_application"
+            expect(tab.locator("#document-type option")).to_have_count(3)
+            expect(tab.locator("#document-type")).to_have_value("academic_leave_application")
             for key in DOCUMENT_SCHEMAS:
                 tab.locator('[data-mode="application_question"]').click()
                 tab.locator("#document-type").select_option(key)
-                assert tab.locator("#document-type option").count() == 3
+                expect(tab.locator("#document-type option")).to_have_count(3)
                 tab.locator('[data-mode="application"]').click()
-                assert tab.locator("#document-type option").count() == 2
-                assert tab.locator("#document-type").input_value() == (
-                    "academic_leave_application" if key == "study_certificate" else key
-                )
+                expect(tab.locator("#document-type option")).to_have_count(3)
+                expect(tab.locator("#document-type")).to_have_value(key)
             tab.locator("#preview-page").wait_for(state="visible")
             tab.wait_for_function(
                 "() => document.getElementById('preview-image').complete && document.getElementById('preview-image').naturalWidth > 0"
@@ -95,7 +91,6 @@ def run():
                         if (pixels[i+1] > pixels[i] * 1.5 && pixels[i+1] > pixels[i+2]) green++;
                         if (pixels[i+2] > pixels[i] * 1.5 && pixels[i+2] > pixels[i+1]) blue++;
                     }
-                    // Verify blue border positions, not just presence, after zoom/resize.
                     const page = currentVisuals?.pages.find(p => p.page === previewPage);
                     const signature = currentVisuals?.detections.find(d => d.type === 'signature' && d.status === 'detected' && d.page === previewPage);
                     let signatureBorder = false;
@@ -145,7 +140,7 @@ def run():
             tab.wait_for_timeout(200)
             Path(".tmp").mkdir(exist_ok=True)
             tab.screenshot(path=".tmp/cv-viewer.png", full_page=True)
-            # Changing the selected document must clear all stale boxes immediately.
+
             tab.locator("#document").set_input_files(
                 {"name": "new.png", "mimeType": "image/png", "buffer": encoded(page()[0])}
             )
@@ -171,10 +166,14 @@ def run():
                     response = submitted.value
                     assert response.status == 202
                     new_id = response.json()["request_id"]
-                    tab.wait_for_function("() => !document.getElementById('send-request').disabled")
+                    expected_status = "checked" if target_mode == "application_question" else "sent"
+                    tab.wait_for_function(
+                        "([id, status]) => requestsById.get(id)?.status === status && !busy",
+                        arg=[new_id, expected_status],
+                    )
                     items = tab.request.get(f"{base}/api/messages").json()["requests"]
                     item = next(item for item in items if item["id"] == new_id)
-                    assert item["status"] == "sent"
+                    assert item["status"] == expected_status
                     assert item["document_type"] == key
                     assert item["application_type"] == schema["label"]
                     assert set(item["fields"]) == set(schema["fields"])

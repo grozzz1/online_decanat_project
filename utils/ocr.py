@@ -54,7 +54,7 @@ def _ocr_words(image):
 
 
 def _refine_number_ocr(image, text, words):
-    """Re-read a labelled identifier crop; never infer letters from a known prefix."""
+
     confusables = {
         "A": "А",
         "B": "БВ",
@@ -89,8 +89,7 @@ def _refine_number_ocr(image, text, words):
             continue
         if candidate == original or len(candidate) != len(original):
             continue
-        # Accept only visually confusable alphabet changes confirmed by the crop OCR.
-        # Legitimate Latin identifiers, changed digits and changed punctuation stay untouched.
+
         if not all(
             a == b or b.upper() in confusables.get(a.upper(), "") for a, b in zip(original, candidate)
         ):
@@ -102,7 +101,7 @@ def _refine_number_ocr(image, text, words):
 
 
 def analyze_document(document, application_type="", debug_dir=None, *, use_ai=True):
-    """OCR + CV for image/PDF; preview pages and boxes share the canonical orientation."""
+
     pytesseract.pytesseract.tesseract_cmd = get_tesseract_command()
     images = load_document_pages(document.getvalue())
     debug_dir = debug_dir or getenv("DOCUMENT_CV_DEBUG_DIR")
@@ -119,7 +118,6 @@ def analyze_document(document, application_type="", debug_dir=None, *, use_ai=Tr
                     if rotation:
                         image = source.rotate(-rotation, expand=True)
             except (pytesseract.TesseractError, RuntimeError):
-                # Sparse documents or missing osd.traineddata must not break existing OCR.
                 warnings.append(f"Страница {number}: ориентация не определена автоматически.")
             try:
                 text = pytesseract.image_to_string(
@@ -153,7 +151,6 @@ def analyze_document(document, application_type="", debug_dir=None, *, use_ai=Tr
                                 f"Страница {number}: не удалось сохранить отладочное изображение."
                             )
                 except Exception as error:
-                    # CV is supplementary: forwarding an otherwise valid document still works.
                     metadata["analysis_status"] = "unavailable"
                     warnings.append(
                         f"Страница {number}: визуальный анализ недоступен ({type(error).__name__})."
@@ -190,6 +187,21 @@ def reprocess_document(
     cached_extraction=None,
 ):
     classification = classify_document(recognized, visuals.get("pages"))
+    if isinstance(selected_type, str) and selected_type.startswith("custom_"):
+        extraction = empty_extraction(selected_type, processing_errors)
+        extraction.update(custom_document=True, document_text=recognized)
+        return {
+            "recognized": recognized,
+            "ocr_text": recognized,
+            "visuals": visuals,
+            "validation": validate_document_visuals(None, visuals),
+            "selected_document_type": selected_type,
+            **classification,
+            "document_type_matches_selection": None,
+            "document_type": selected_type,
+            "fields": {},
+            "extraction": extraction,
+        }
     selected = normalize_document_type(selected_type)
     detected = classification["detected_document_type"]
     document_type = (
@@ -220,7 +232,6 @@ def reprocess_document(
 
                     extraction = supplement_fields(extraction, recognized)
                 except Exception as error:
-                    # A broken optional AI configuration must not erase valid Regex output.
                     extraction["hybrid"] = {
                         "status": type(error).__name__,
                         "llm_called": False,

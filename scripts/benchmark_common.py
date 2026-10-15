@@ -1,5 +1,3 @@
-"""Shared, reference-free I/O and normalization for experiment tools."""
-
 import csv
 import json
 import re

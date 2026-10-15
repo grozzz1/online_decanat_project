@@ -1,5 +1,3 @@
-"""Decode supported uploads into canonical RGB pages (also used for previews)."""
-
 from io import BytesIO
 from math import isfinite
 from threading import RLock
@@ -11,7 +9,7 @@ MAX_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 12
 MAX_IMAGE_PIXELS = 20_000_000
 MAX_PDF_SIDE = 2000
-# PDFium is not thread-safe. Both Flask validation and background rendering use this lock.
+
 pdf_lock = RLock()
 
 
@@ -27,7 +25,7 @@ def _pdf(data):
 
 
 def validate_document(data: bytes) -> str:
-    """Validate actual content, never trust the extension or client MIME type."""
+
     if not data or len(data) > MAX_BYTES:
         raise ValueError("Документ должен быть не больше 10 МБ.")
     if data.lstrip().startswith(b"%PDF-"):
@@ -60,7 +58,7 @@ def validate_document(data: bytes) -> str:
 
 
 def _rgb(image):
-    # Composite alpha onto white, rather than interpreting transparent pixels as ink.
+
     rgba = image.convert("RGBA")
     background = Image.new("RGBA", rgba.size, "white")
     background.alpha_composite(rgba)

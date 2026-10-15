@@ -1,5 +1,3 @@
-"""Rebuild the local normative-document index explicitly (also refreshed on change)."""
-
 import sys
 from pathlib import Path
 

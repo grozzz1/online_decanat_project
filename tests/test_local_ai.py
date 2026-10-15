@@ -1,5 +1,3 @@
-"""Adversarial source checks; unit tests never need a model or external network."""
-
 import tempfile
 import unittest
 from pathlib import Path
@@ -56,7 +54,7 @@ class HybridTests(unittest.TestCase):
     def test_hallucinated_quote_and_unknown_keys_rejected(self):
         text = remove_field(TEXTS["study_certificate"], "Университет:")
         baseline = extraction(text=text)
-        # Force a genuinely absent field independently of the fixture's label spelling.
+
         baseline["fields"]["university"] = None
         baseline["field_statuses"]["university"] = "missing"
         for response in (

@@ -8,7 +8,7 @@ models/
 tools/llama.cpp/
 .local_ai/
 
-# Local configuration, credentials and environments
+.idea/
 .env.*
 !.env.example
 venv/
@@ -16,7 +16,6 @@ venv/
 *.pem
 *.key
 
-# Python and developer caches
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -26,7 +25,6 @@ htmlcov/
 build/
 dist/
 
-# Runtime data and reproducible, generated experiment output
 uploads/
 private_data/
 logs/

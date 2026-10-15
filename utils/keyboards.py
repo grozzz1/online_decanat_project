@@ -1,6 +1,13 @@
-from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
+from telebot.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    WebAppInfo,
+)
 
 from utils.callbacks import reply_data, web_reply_data
+from utils.config import get_public_base_url
 from utils.document_fields import DOCUMENT_SCHEMAS
 
 DEAN_QUESTION = "❔ Задать вопрос деканату"
@@ -9,6 +16,33 @@ APPLICATION_QUESTION = "🔍 Задать вопрос по заявлению"
 BACK = "⬅ Назад в меню"
 APPLICATIONS = tuple(schema["label"] for schema in DOCUMENT_SCHEMAS.values())
 APPLICATION_QUESTIONS = APPLICATIONS
+
+
+def available_document_types(bot, mode):
+    store = getattr(getattr(bot, "web", None), "store", None)
+    if store is not None:
+        return store.types.list(mode)
+    return [
+        {"key": key, "label": schema["label"], "custom": False} for key, schema in DOCUMENT_SCHEMAS.items()
+    ]
+
+
+def document_menu(bot, mode):
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, input_field_placeholder="Выбери тип документа")
+    for item in available_document_types(bot, mode):
+        markup.add(KeyboardButton(item["label"]))
+    markup.add(KeyboardButton(BACK))
+    return markup
+
+
+def miniapp_menu():
+    url = get_public_base_url()
+    if not url.startswith("https://"):
+        return None
+    markup = InlineKeyboardMarkup()
+    markup.add(InlineKeyboardButton("Открыть личный кабинет", web_app=WebAppInfo(url + "/miniapp")))
+    return markup
+
 
 main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,

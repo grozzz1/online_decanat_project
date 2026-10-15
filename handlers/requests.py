@@ -11,9 +11,9 @@ from utils.document_logging import log_document_failure, log_document_result
 from utils.documents import MAX_BYTES, validate_document
 from utils.keyboards import (
     answer_student_menu,
-    application_questions_menu,
-    applications_menu,
+    available_document_types,
     back_menu,
+    document_menu,
     main_menu,
 )
 from utils.ocr import analyze_document_async
@@ -53,16 +53,27 @@ async def send_application(bot, message, key, dean_chat_id):
     if attachment.file_size and attachment.file_size > MAX_BYTES:
         raise ValueError("Документ должен быть не больше 10 МБ.")
     file = await bot.get_file(attachment.file_id)
+    mode = "application_question" if states[key] == "application_question" else "application"
+    selected = next(
+        (
+            item
+            for item in available_document_types(bot, mode)
+            if application_types[key] in (item["label"], item["key"])
+            or item["key"] == normalize_document_type(application_types[key])
+        ),
+        None,
+    )
+    if selected is None:
+        raise ValueError("Этот тип документа удалён. Вернись в меню и выбери другой.")
 
     with BytesIO(await bot.download_file(file.file_path)) as photo:
         mimetype = validate_document(photo.getvalue())
         try:
-            analysis = await analyze_document_async(photo, normalize_document_type(application_types[key]))
+            analysis = await analyze_document_async(photo, selected["key"])
         except Exception as error:
             log_document_failure(application_types[key], error, getattr(bot, "write_log", None))
             raise
         log_document_result(analysis["extraction"], getattr(bot, "write_log", None))
-        recognized = analysis["recognized"]
         question = message.caption if states[key] == "application_question" else None
         if question is not None:
             remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
@@ -74,8 +85,8 @@ async def send_application(bot, message, key, dean_chat_id):
             dean_chat_id,
             message.from_user,
             photo,
-            document_label(analysis["document_type"]),
-            recognized,
+            selected["label"] if selected["custom"] else document_label(analysis["document_type"]),
+            analysis["extraction"],
             question,
             markup,
             visuals=analysis["visuals"],
@@ -139,13 +150,13 @@ async def handle_request(bot, message, dean_chat_id):
         await bot.reply_to(
             message,
             "Выбери заявление кнопкой ниже:",
-            reply_markup=applications_menu,
+            reply_markup=document_menu(bot, "application"),
         )
     elif state == "application_question_type":
         await bot.reply_to(
             message,
             "Выбери документ кнопкой ниже:",
-            reply_markup=application_questions_menu,
+            reply_markup=document_menu(bot, "application_question"),
         )
     elif state == "application_photo":
         if is_document(message):

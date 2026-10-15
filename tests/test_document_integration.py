@@ -1,6 +1,7 @@
 import asyncio
 import unittest
 from io import BytesIO
+from tempfile import TemporaryDirectory
 from threading import Thread
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -11,6 +12,7 @@ from handlers.requests import accept_request, handle_request, send_application
 from tests.fixtures import TEXTS, encoded, page
 from utils.document_fields import DOCUMENT_SCHEMAS
 from utils.states import application_types, clear_state, states
+from utils.storage import Storage
 from webapp.app import create_app
 
 
@@ -27,7 +29,9 @@ class WebIntegrationTests(unittest.TestCase):
             send_document=AsyncMock(return_value=SimpleNamespace(message_id=1)),
             send_message=AsyncMock(return_value=SimpleNamespace(message_id=2)),
         )
-        self.app = create_app(self.bot, self.loop, -1001)
+        self.data_directory = TemporaryDirectory()
+        self.addCleanup(self.data_directory.cleanup)
+        self.app = create_app(self.bot, self.loop, -1001, Storage(self.data_directory.name))
         self.app.config["TESTING"] = True
         self.service = self.app.extensions["decanat"]
         self.client = self.app.test_client()
@@ -50,6 +54,7 @@ class WebIntegrationTests(unittest.TestCase):
         self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(timeout=5)
         self.loop.close()
+        self.data_directory.cleanup()
 
     def finish_processing(self):
         async def finish():
@@ -76,7 +81,9 @@ class WebIntegrationTests(unittest.TestCase):
             for key, schema in DOCUMENT_SCHEMAS.items():
                 with (
                     self.subTest(key=key, mode=mode),
-                    patch("utils.ocr.pytesseract.image_to_string", return_value=TEXTS[key]),
+                    patch(
+                        "utils.ocr.pytesseract.image_to_string", return_value=TEXTS[key] + "\nOCR_BODY_ONLY"
+                    ),
                     patch.object(self.bot, "write_log") as logs,
                 ):
                     response = self.upload(encoded(image), "document.png", key, mode)
@@ -96,6 +103,14 @@ class WebIntegrationTests(unittest.TestCase):
                     for field in schema["fields"]:
                         self.assertIn(field, reports[0])
                     self.assertNotIn(item["fields"]["student_name"], reports[0])
+                    if mode == "application":
+                        notification = self.bot.send_photo.await_args.kwargs["caption"] + "\n".join(
+                            call.args[1] for call in self.bot.send_message.await_args_list
+                        )
+                        self.assertIn("student_name", notification)
+                        self.assertIn(item["fields"]["student_name"], notification)
+                        self.assertNotIn("OCR_BODY_ONLY", notification)
+                        self.assertNotIn("Текст документа:", notification)
 
     def test_unknown_document_type_is_rejected(self):
         self.assertEqual(self.upload(encoded(page()[0]), "document.png", "invented_type").status_code, 400)
@@ -246,7 +261,10 @@ class BotIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 application_types[key] = schema["label"]
                 try:
                     with (
-                        patch("utils.ocr.pytesseract.image_to_string", return_value=TEXTS[document_type]),
+                        patch(
+                            "utils.ocr.pytesseract.image_to_string",
+                            return_value=TEXTS[document_type] + "\nOCR_BODY_ONLY",
+                        ),
                         patch("utils.ocr.pytesseract.image_to_osd", return_value={}),
                         patch("utils.ocr._ocr_words", return_value=[]),
                     ):
@@ -259,6 +277,12 @@ class BotIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("Иванов", reports[0])
                     self.assertNotIn("Сидорова", reports[0])
                     self.assertNotIn("Петров", reports[0])
+                    notification = bot.send_photo.await_args.kwargs["caption"] + "\n".join(
+                        call.args[1] for call in bot.send_message.await_args_list
+                    )
+                    self.assertIn("student_name", notification)
+                    self.assertNotIn("OCR_BODY_ONLY", notification)
+                    self.assertNotIn("Текст документа:", notification)
                 finally:
                     clear_state(key)
 

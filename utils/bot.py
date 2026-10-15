@@ -1,5 +1,5 @@
 import logging
-from asyncio import Queue, create_task, sleep
+from asyncio import Queue, create_task, sleep, to_thread
 from contextvars import ContextVar
 from datetime import datetime
 from re import sub
@@ -188,16 +188,19 @@ class Bot(AsyncTeleBot):
 
     async def send_message(self, chat_id, text, *args, **kwargs):
         sent = await super().send_message(chat_id, text, *args, **kwargs)
+        await self.archive_message(sent)
         self.log_message("Бот → чат", sent)
         return sent
 
     async def send_photo(self, chat_id, photo, *args, **kwargs):
         sent = await super().send_photo(chat_id, photo, *args, **kwargs)
+        await self.archive_message(sent)
         self.log_message("Бот → чат", sent)
         return sent
 
     async def send_document(self, chat_id, document, *args, **kwargs):
         sent = await super().send_document(chat_id, document, *args, **kwargs)
+        await self.archive_message(sent)
         self.log_message("Бот → чат", sent)
         return sent
 
@@ -211,9 +214,61 @@ class Bot(AsyncTeleBot):
         edited = await super().edit_message_text(text, *args, **kwargs)
 
         if isinstance(edited, Message):
+            await self.archive_message(edited)
             self.log_message("Бот изменил сообщение", edited)
 
         return edited
+
+    async def archive_message(self, message, incoming=False):
+        store = getattr(self.web, "store", None)
+        if (
+            store is None
+            or message.chat.type != "private"
+            or message.chat.id in (self.admin_log_chat_id, self.web.dean_chat_id)
+        ):
+            return
+        user_id = message.from_user.id if incoming else message.chat.id
+        if incoming:
+            store.register_user(message.from_user)
+        text = message.text or message.caption or ""
+        role = (
+            "student"
+            if incoming
+            else "ai"
+            if current_ai_reply.get()
+            else "dean"
+            if text.startswith("Ответ деканата\n")
+            else "bot"
+        )
+        media_tag = None
+        attachment = message.photo[-1] if message.photo else message.document
+        if attachment:
+            size = getattr(attachment, "file_size", None)
+            mimetype = "image/jpeg" if message.photo else getattr(attachment, "mime_type", "")
+            if (not size or size <= 20 * 1024 * 1024) and mimetype in (
+                "image/jpeg",
+                "image/png",
+                "application/pdf",
+            ):
+                try:
+                    file = await self.get_file(attachment.file_id)
+                    data = await self.download_file(file.file_path)
+                    if len(data) <= 20 * 1024 * 1024:
+                        from utils.documents import validate_document
+
+                        mimetype = validate_document(data)
+                        media_tag = await to_thread(store.storage.save_media, user_id, data, mimetype)
+                except Exception as error:
+                    self.log_error(error, "Не удалось сохранить вложение переписки")
+                    text += "\nВложение недоступно для сохранения."
+        store.add_message(
+            user_id,
+            role,
+            text,
+            media_tag=media_tag,
+            source="telegram",
+            external_id=f"telegram:{message.chat.id}:{message.message_id}",
+        )
 
     async def _process_polling(self, *args, **kwargs):
         try:
