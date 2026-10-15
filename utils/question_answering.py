@@ -1,5 +1,3 @@
-"""Python routing, local rule retrieval and conservative, source-checked Qwen answers."""
-
 import logging
 import re
 from asyncio import to_thread
@@ -100,7 +98,7 @@ def field_names(text, extraction):
         for name in extraction["fields"]
         for m in re.finditer(r"\b" + re.escape(name) + r"\b", text, re.I)
     ]
-    # Longer label wins over a contained generic label (Дата vs Дата начала отпуска).
+
     matches = [
         m
         for m in matches
@@ -238,6 +236,19 @@ def route_python(question, extraction, knowledge):
 
 
 def retrieve_for_question(question, extraction, knowledge, limit=5):
+    if extraction and extraction.get("custom_document"):
+        words = set(tokens(question["question"]))
+        lines = [
+            line.strip()[:1200]
+            for line in extraction.get("document_text", "")[:20000].splitlines()
+            if line.strip()
+        ]
+        ranked = sorted(enumerate(lines, 1), key=lambda pair: len(words & set(tokens(pair[1]))), reverse=True)
+        return [
+            {"source": f"document:{number}", "text": text}
+            for number, text in ranked[:limit]
+            if words & set(tokens(text))
+        ]
     required = (
         preliminary_check(extraction)["sources"]
         if extraction and validation_intent(question["question"])
@@ -279,7 +290,7 @@ def validate_generated_answer(proposal, question, extraction, snippets, expected
             or set(proposal["sources"]) != set(expected["sources"])
         ):
             raise AIError("contradicts_python")
-        # Discard free-form text even when the machine-readable value is correct.
+
         return expected
     raise AIError("free_form_claim_not_verifiable")
 
@@ -302,7 +313,11 @@ class QuestionEngine:
             "technical_error": False,
         }
         try:
-            route, result = route_python(question, extraction, self.knowledge)
+            route, result = (
+                ("COMPLEX", None)
+                if extraction and extraction.get("custom_document")
+                else route_python(question, extraction, self.knowledge)
+            )
             diagnostics["route"] = route
             if route == "PYTHON_FIELD" or route == "UNANSWERABLE":
                 pass
@@ -414,7 +429,7 @@ class QuestionEngine:
                         selected.append(quote)
                         sources.append(source)
                 value = "\n".join(selected)
-                # Only verified quotations reach users. The LLM supplies no unchecked narrative.
+
                 return make_answer(question["question_id"], value, sources, "Найденные сведения:\n" + value)
             except AIError as error:
                 diagnostics["rejections"].append(str(error))

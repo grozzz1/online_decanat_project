@@ -1,11 +1,9 @@
-"""Transport-independent consistency checks shared by every upload channel."""
-
 from utils.document_fields import DOCUMENT_SCHEMAS
 from utils.document_policy import preliminary_check
 
 
 def validate_document_visuals(application_type: str | None, visuals: dict) -> dict:
-    # CV findings are informational; requiredness is checked by the field policy.
+
     return {
         "application_type": application_type,
         "status": "informational",
@@ -21,7 +19,7 @@ def validate_document_visuals(application_type: str | None, visuals: dict) -> di
 
 
 def validate_document_fields(extraction: dict) -> dict:
-    """Check period consistency and completeness under the supplied document policy."""
+
     schema = DOCUMENT_SCHEMAS[extraction["document_type"]]
     start, end = schema["period"]
     fields = extraction["fields"]

@@ -1,5 +1,3 @@
-"""Synthetic regression fixtures; passing these does not measure real-document accuracy."""
-
 import tempfile
 import unittest
 from io import BytesIO
@@ -26,10 +24,10 @@ class VisualTests(unittest.TestCase):
             for word in words
         ]
         draw.line((60, 820, 700, 820), fill="gray", width=1)
-        # Detached side stroke, ascender and descender with gaps from the main body.
+
         draw.line([(284, 814), (290, 782), (296, 819)], fill=(15, 40, 130), width=3)
         draw.line([(145, 844), (150, 856)], fill=(15, 40, 130), width=3)
-        draw.line([(340, 775), (355, 780)], fill="black", width=3)  # Unrelated nearby note.
+        draw.line([(340, 775), (355, 780)], fill="black", width=3)
         result = analyze_document_visuals(image, words)
         x1, y1, x2, y2 = result["student_signature"]["bbox"]
         self.assertLessEqual(x1, 110)
@@ -38,7 +36,7 @@ class VisualTests(unittest.TestCase):
         self.assertGreaterEqual(y2, 857)
         self.assertGreater(x1, 70)
         self.assertLess(x2, 340)
-        self.assertLess(y2, 900)  # Printed label must remain outside the box.
+        self.assertLess(y2, 900)
 
     def test_signature_original_scale_covers_full_handwriting(self):
         image, words = page(signature=True)

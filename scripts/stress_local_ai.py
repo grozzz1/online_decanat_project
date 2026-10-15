@@ -1,5 +1,3 @@
-"""Real model checks on new synthetic prose; not part of the 30-document accuracy score."""
-
 import sys
 from pathlib import Path
 
@@ -38,7 +36,7 @@ def validate_results(results):
 
 
 def run():
-    # These texts are synthetic probes, never reference_results.json content.
+
     cases = [
         (
             "university_in_prose",

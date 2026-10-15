@@ -1,5 +1,3 @@
-"""Build the human report exclusively from saved measurements; never run inference."""
-
 import argparse
 import csv
 import json

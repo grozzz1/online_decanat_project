@@ -1,5 +1,3 @@
-"""Export aggregate measurements only; keep documents, OCR and raw answers private."""
-
 import argparse
 import csv
 import json
@@ -61,7 +59,7 @@ def publish(source, target, revision):
     if len(qa_hashes) != 1 or len(extraction_hashes) != 1:
         raise ValueError("Mixed protocol hashes: inspect the run before publication")
     target.mkdir(parents=True, exist_ok=True)
-    # These six files contain counts, schema identifiers and timing aggregates only.
+
     for name in (
         "field_extraction_comparison.csv",
         "field_accuracy_by_type.csv",
@@ -246,7 +244,9 @@ def publish(source, target, revision):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description="Export aggregate measurements only; keep documents, OCR and raw answers private."
+    )
     parser.add_argument("--source", type=Path, default=ROOT / "benchmark_results")
     parser.add_argument("--target", type=Path, default=ROOT / "docs" / "benchmarks")
     parser.add_argument("--protocol-revision")

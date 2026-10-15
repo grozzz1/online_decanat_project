@@ -1,6 +1,7 @@
 from telebot import util
 from telebot.asyncio_helper import ApiTelegramException
 
+from utils.document_logging import format_document_report
 from utils.users import get_username
 
 
@@ -51,7 +52,7 @@ async def send_application(
     user,
     photo,
     application_type,
-    recognized,
+    extraction,
     question=None,
     markup=None,
     source="",
@@ -59,8 +60,7 @@ async def send_application(
     mimetype="image/jpeg",
     progress=None,
 ):
-    # Resume only acknowledged parts. A lost response cannot be retried automatically:
-    # Telegram Bot API has no idempotency key for sendPhoto/sendDocument.
+
     progress = progress if progress is not None else {}
 
     async def acknowledged(call):
@@ -69,7 +69,7 @@ async def send_application(
             result = await call()
         except ApiTelegramException as error:
             if 400 <= error.error_code < 500:
-                progress["uncertain"] = False  # Explicit rejection: no message was accepted.
+                progress["uncertain"] = False
             raise
         progress["uncertain"] = False
         return result
@@ -82,9 +82,12 @@ async def send_application(
     if question is not None:
         text += f"\n\nВопрос: {question.strip()}"
 
+    if extraction:
+        text += f"\n\n{format_document_report(extraction, source or 'telegram', include_values=True)}"
+    else:
+        text += "\n\nОсновные поля документа не удалось распознать."
     if visuals:
         text += f"\n\n{visual_summary(visuals)}"
-    text += f"\n\nТекст документа:\n{recognized or 'Не удалось распознать текст.'}"
     photo.seek(0)
     if "message_id" not in progress:
         if mimetype == "application/pdf":

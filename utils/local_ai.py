@@ -1,5 +1,3 @@
-"""One shared, bounded client for a loopback-only llama.cpp/Ollama server."""
-
 import http.client
 import json
 import logging
@@ -13,7 +11,7 @@ from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 
-from utils import config  # noqa: F401 -- load the project .env before reading AI settings.
+from utils import config as config
 
 logger = logging.getLogger("decanat.ai")
 logger.setLevel(logging.INFO)
@@ -52,7 +50,7 @@ class AIConfig:
 
 
 class AIError(RuntimeError):
-    """Safe diagnostic code only; never contains the document or response body."""
+    pass
 
 
 def strict_json(text):

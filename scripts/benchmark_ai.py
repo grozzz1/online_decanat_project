@@ -1,5 +1,3 @@
-"""Real paired experiments. References are read ONLY by evaluate(), after inference."""
-
 import argparse
 import hashlib
 import json
@@ -182,7 +180,7 @@ def qa_experiments(args):
                             )
                         except AIError as failure:
                             error = str(failure)
-                        predictions.append(answer)  # RAW prompt baseline; never delivered to a user.
+                        predictions.append(answer)
                         diagnostics.append(
                             {
                                 "route": variant,
@@ -223,7 +221,7 @@ def qa_experiments(args):
 
 
 def evaluate(args):
-    # Evaluation-only boundary. None of the functions above read references.
+
     references = {d["document_id"]: d for d in load(args.dataset / "reference_results.json")["documents"]}
     questions = load(args.dataset / "questions.json")
     questions_by_id = {q["question_id"]: q for q in questions}
@@ -361,8 +359,7 @@ def evaluate(args):
                 stats["unsupported_positive_answers"] += prediction["answerable"] and (
                     not expected["answerable"] or not value or not sources
                 )
-                # A prose "yes" instead of document_ok is a protocol error, not automatically
-                # an invented fact. Keep citation and machine-value defects separate.
+
                 stats["hallucinations"] += prediction["answerable"] and (
                     not expected["answerable"]
                     or (not value and not is_validation)
@@ -507,7 +504,7 @@ def evaluate(args):
                 "precision_at_5": found5 / max(1, retrieved_count),
             }
         )
-    # Explicit columns keep zeros visible, even when Counter has never seen that event.
+
     field_columns = [
         "approach",
         "documents",

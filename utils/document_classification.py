@@ -1,5 +1,3 @@
-"""Content classification, independent of the type selected in the UI."""
-
 import re
 
 from utils.document_fields import normalize_ocr_text
@@ -51,7 +49,7 @@ def classify_document(text, pages=None):
             if match:
                 headings[key] = match[0].strip()
                 break
-    # A generic 'ЗАЯВЛЕНИЕ' heading needs content confirming academic leave.
+
     combined = "\n".join(lines)
     if "academic_leave_application" not in headings and re.search(r"академическ\w*\s+отпуск", combined, re.I):
         heading = next((line.strip() for line in lines if re.fullmatch(r"\s*ЗАЯВЛЕНИЕ\s*", line, re.I)), None)

@@ -1,5 +1,3 @@
-"""Check the publishable Git tree without displaying secret values."""
-
 import json
 import re
 import subprocess
@@ -42,7 +40,7 @@ def check():
     checked = 0
     for name in names:
         path = ROOT / name
-        if not path.is_file():  # Deleted entries may still be in the index before staging.
+        if not path.is_file():
             continue
         checked += 1
         parts = Path(name).parts

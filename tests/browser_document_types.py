@@ -1,9 +1,7 @@
-"""Chrome checks against real Flask routes; OCR and Telegram transport are mocked."""
-
 from threading import Thread
 from unittest.mock import patch
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 from telebot.asyncio_helper import ApiTelegramException
 from werkzeug.serving import make_server
 
@@ -49,7 +47,6 @@ def run():
                     wait_status(request_id, status)
                 return request_id
 
-            # Detection must not silently change the student's selection.
             request_id = upload("СПРАВКА ОБ ОБУЧЕНИИ\n" + TEXTS["study_certificate"])
             assert tab.locator("#document-type option").count() == 3
             assert tab.locator("#confirm-document").is_disabled()
@@ -59,7 +56,7 @@ def run():
             assert tab.locator("#send-request").is_enabled()
             tab.locator('[data-mode="application"]').click()
             tab.locator("#change-document-type").click()
-            assert tab.locator("#type-notice").is_hidden()
+            expect(tab.locator("#type-notice")).to_be_hidden()
             assert tab.locator("#document-type").input_value() == "academic_leave_application"
             assert tab.locator("#document-type option").count() == 3
             tab.keyboard.press("Escape")
@@ -79,7 +76,6 @@ def run():
             assert item["detected_document_type"] == "study_certificate"
             tab.set_viewport_size({"width": 1440, "height": 1000})
 
-            # Rechecking selection uses cached OCR, including another wrong choice.
             request_id = upload("СПРАВКА О ПРАКТИКЕ\n" + TEXTS["internship_certificate"])
             with patch("utils.ocr.pytesseract.image_to_string", side_effect=AssertionError("OCR repeated")):
                 tab.locator("#change-document-type").click()
@@ -88,12 +84,12 @@ def run():
                     tab.locator("#document-type").select_option("internship_certificate")
                 tab.locator("#type-notice").wait_for(state="hidden")
                 tab.wait_for_function("() => !busy")
-                assert tab.locator("#confirm-document").is_enabled()
+                expect(tab.locator("#confirm-document")).to_be_enabled()
                 with tab.expect_response(lambda r: r.url.endswith("/type")):
                     tab.locator("#document-type").select_option("academic_leave_application")
                 tab.locator("#type-notice").wait_for(state="visible")
                 tab.wait_for_function("() => !busy")
-                assert tab.locator("#confirm-document").is_disabled()
+                expect(tab.locator("#confirm-document")).to_be_disabled()
                 with tab.expect_response(lambda r: r.url.endswith("/type")):
                     tab.locator("#document-type").select_option("internship_certificate")
                 tab.wait_for_function("() => !busy && !document.getElementById('confirm-document').disabled")

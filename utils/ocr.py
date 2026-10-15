@@ -1,3 +1,4 @@
+import re
 from asyncio import to_thread
 from os import getenv
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytesseract
 from utils.config import get_tesseract_command
 from utils.document_classification import classify_document
 from utils.document_cv import analyze_document_visuals, save_debug_image, summarize_visuals
-from utils.document_fields import empty_extraction, extract_document_fields, normalize_document_type
+from utils.document_fields import ALIASES, empty_extraction, extract_document_fields, normalize_document_type
 from utils.document_policy import preliminary_check
 from utils.document_validation import validate_document_fields, validate_document_visuals
 from utils.documents import load_document_pages, preview_bytes
@@ -52,8 +53,55 @@ def _ocr_words(image):
     return words
 
 
+def _refine_number_ocr(image, text, words):
+
+    confusables = {
+        "A": "А",
+        "B": "БВ",
+        "C": "С",
+        "E": "Е",
+        "H": "Н",
+        "K": "К",
+        "M": "М",
+        "O": "О",
+        "P": "Р",
+        "T": "Т",
+        "X": "Х",
+        "Y": "У",
+    }
+    pattern = rf"(?:{ALIASES['document_number']})[ \t]*[:—–-]?[ \t]*(?P<number>[\w./-]+)"
+    replacements = []
+    for match in re.finditer(pattern, text, re.I):
+        original = match["number"]
+        if not re.search(r"[A-Za-z]", original) or not re.search(r"\d", original):
+            continue
+        candidates = [word for word in words if word["text"] == original]
+        if len(candidates) != 1:
+            continue
+        x, y, right, bottom = candidates[0]["bbox"]
+        box = (max(0, x - 10), max(0, y - 10), min(image.width, right + 10), min(image.height, bottom + 10))
+        try:
+            with image.crop(box) as crop:
+                candidate = pytesseract.image_to_string(
+                    crop, lang="rus+eng", config="--psm 7", timeout=20
+                ).strip()
+        except (pytesseract.TesseractError, RuntimeError, OSError):
+            continue
+        if candidate == original or len(candidate) != len(original):
+            continue
+
+        if not all(
+            a == b or b.upper() in confusables.get(a.upper(), "") for a, b in zip(original, candidate)
+        ):
+            continue
+        replacements.append((match.start("number"), match.end("number"), candidate))
+    for start, end, value in reversed(replacements):
+        text = text[:start] + value + text[end:]
+    return text
+
+
 def analyze_document(document, application_type="", debug_dir=None, *, use_ai=True):
-    """OCR + CV for image/PDF; preview pages and boxes share the canonical orientation."""
+
     pytesseract.pytesseract.tesseract_cmd = get_tesseract_command()
     images = load_document_pages(document.getvalue())
     debug_dir = debug_dir or getenv("DOCUMENT_CV_DEBUG_DIR")
@@ -70,19 +118,19 @@ def analyze_document(document, application_type="", debug_dir=None, *, use_ai=Tr
                     if rotation:
                         image = source.rotate(-rotation, expand=True)
             except (pytesseract.TesseractError, RuntimeError):
-                # Sparse documents or missing osd.traineddata must not break existing OCR.
                 warnings.append(f"Страница {number}: ориентация не определена автоматически.")
             try:
                 text = pytesseract.image_to_string(
                     image, lang="rus+eng", config="--psm 6", timeout=60
                 ).strip()
-                texts.append(text if len(images) == 1 else f"Страница {number}\n{text}")
                 words = []
                 try:
                     words = _ocr_words(image)
                 except (pytesseract.TesseractError, RuntimeError) as error:
                     warnings.append(f"Страница {number}: координаты OCR недоступны ({type(error).__name__}).")
                     processing_errors.append({"stage": "ocr_coordinates", "code": type(error).__name__})
+                text = _refine_number_ocr(image, text, words)
+                texts.append(text if len(images) == 1 else f"Страница {number}\n{text}")
                 metadata = {
                     "page": number,
                     "width": image.width,
@@ -103,7 +151,6 @@ def analyze_document(document, application_type="", debug_dir=None, *, use_ai=Tr
                                 f"Страница {number}: не удалось сохранить отладочное изображение."
                             )
                 except Exception as error:
-                    # CV is supplementary: forwarding an otherwise valid document still works.
                     metadata["analysis_status"] = "unavailable"
                     warnings.append(
                         f"Страница {number}: визуальный анализ недоступен ({type(error).__name__})."
@@ -140,6 +187,21 @@ def reprocess_document(
     cached_extraction=None,
 ):
     classification = classify_document(recognized, visuals.get("pages"))
+    if isinstance(selected_type, str) and selected_type.startswith("custom_"):
+        extraction = empty_extraction(selected_type, processing_errors)
+        extraction.update(custom_document=True, document_text=recognized)
+        return {
+            "recognized": recognized,
+            "ocr_text": recognized,
+            "visuals": visuals,
+            "validation": validate_document_visuals(None, visuals),
+            "selected_document_type": selected_type,
+            **classification,
+            "document_type_matches_selection": None,
+            "document_type": selected_type,
+            "fields": {},
+            "extraction": extraction,
+        }
     selected = normalize_document_type(selected_type)
     detected = classification["detected_document_type"]
     document_type = (
@@ -170,7 +232,6 @@ def reprocess_document(
 
                     extraction = supplement_fields(extraction, recognized)
                 except Exception as error:
-                    # A broken optional AI configuration must not erase valid Regex output.
                     extraction["hybrid"] = {
                         "status": type(error).__name__,
                         "llm_called": False,

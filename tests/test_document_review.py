@@ -100,7 +100,6 @@ class ClassificationTests(unittest.TestCase):
 
 
 class ReviewRouteTests(unittest.TestCase):
-    # Reuse setup methods, without inheriting and rerunning the existing test cases.
     setUp = integration.WebIntegrationTests.setUp
     tearDown = integration.WebIntegrationTests.tearDown
     finish_processing = integration.WebIntegrationTests.finish_processing
@@ -232,9 +231,15 @@ class ReviewRouteTests(unittest.TestCase):
         from telebot.asyncio_helper import ApiTelegramException
 
         request_id, _ = self.submit_mismatch()
-        # Long OCR produces text chunks after the file. Reject the first chunk.
+        self.client.post(
+            f"/api/requests/{request_id}/type",
+            json={"document_type": "study_certificate", "mode": "application", "text": ""},
+            headers={"X-CSRF-Token": self.csrf},
+        )
         item = self.service.store.get_request(123, request_id)
-        self.service.store.update_request(request_id, ocr_text=item["ocr_text"] + "\n" + "x" * 2000)
+        extraction = item["extraction"]
+        extraction["fields"]["university"] = "Длинное название университета " * 100
+        self.service.store.update_request(request_id, extraction=extraction, fields=extraction["fields"])
         self.bot.send_message.side_effect = ApiTelegramException(
             "sendMessage", None, {"error_code": 429, "description": "retry later"}
         )

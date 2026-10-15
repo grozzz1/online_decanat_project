@@ -1,5 +1,3 @@
-"""Bounded, private last-document contexts for Telegram follow-up questions."""
-
 from collections import OrderedDict
 from copy import deepcopy
 from threading import Lock

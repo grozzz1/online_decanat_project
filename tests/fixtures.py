@@ -1,7 +1,3 @@
-"""Synthetic documents and images shared by offline tests and model probes.
-All names and document contents here are invented test data.
-"""
-
 from io import BytesIO
 
 from PIL import Image, ImageDraw, ImageFont
