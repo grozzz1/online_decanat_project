@@ -1,5 +1,6 @@
 from telebot import util
 from telebot.asyncio_helper import ApiException, RequestTimeout
+
 from utils.callbacks import reply_target, web_reply_target
 from utils.keyboards import cancel_reply_menu
 from utils.states import dean_replies
@@ -19,7 +20,9 @@ async def handle_callback(bot, call):
 
                 if target is None:
                     await bot.answer_callback_query(
-                        call.id, "Сессия сайта завершена. Ответить на это обращение уже нельзя.", show_alert=True,
+                        call.id,
+                        "Сессия сайта завершена. Ответить на это обращение уже нельзя.",
+                        show_alert=True,
                     )
                     return
 
@@ -108,7 +111,9 @@ async def handle_reply(bot, message):
                 )
     except (ApiException, RequestTimeout, OSError) as error:
         bot.log_error(error, "Ошибка отправки ответа студенту", message)
-        await bot.reply_to(message, "Не удалось отправить ответ студенту. Попробуй ещё раз или нажми «Отменить».")
+        await bot.reply_to(
+            message, "Не удалось отправить ответ студенту. Попробуй ещё раз или нажми «Отменить»."
+        )
         return
 
     dean_replies.pop(key)

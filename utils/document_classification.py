@@ -1,8 +1,8 @@
 """Content classification, independent of the type selected in the UI."""
+
 import re
 
 from utils.document_fields import normalize_ocr_text
-
 
 TITLES = {
     "study_certificate": r"справка\s+об\s+обучени[ия]",
@@ -10,9 +10,24 @@ TITLES = {
     "internship_certificate": r"справка\s+о\s+(?:прохождении\s+)?практик[еаи]",
 }
 CUES = {
-    "study_certificate": (r"форма\s+обучения", r"направление\s+подготовки", r"период[а]?\s+обучения", r"сведения\s+об\s+обучении"),
-    "academic_leave_application": (r"академическ\w*\s+отпуск", r"причина\s+отпуска", r"дата\s+заявления", r"(?:учебная\s+)?группа"),
-    "internship_certificate": (r"(?:руководител[ья]|дата\s+начала)\s+практики", r"название\s+организации", r"прохождении\s+практики", r"оценка\s*:"),
+    "study_certificate": (
+        r"форма\s+обучения",
+        r"направление\s+подготовки",
+        r"период[а]?\s+обучения",
+        r"сведения\s+об\s+обучении",
+    ),
+    "academic_leave_application": (
+        r"академическ\w*\s+отпуск",
+        r"причина\s+отпуска",
+        r"дата\s+заявления",
+        r"(?:учебная\s+)?группа",
+    ),
+    "internship_certificate": (
+        r"(?:руководител[ья]|дата\s+начала)\s+практики",
+        r"название\s+организации",
+        r"прохождении\s+практики",
+        r"оценка\s*:",
+    ),
 }
 
 
@@ -44,12 +59,24 @@ def classify_document(text, pages=None):
             headings["academic_leave_application"] = heading
     if len(headings) == 1:
         key = next(iter(headings))
-        return {"document_title": headings[key], "detected_document_type": key, "classification_basis": "heading"}
+        return {
+            "document_title": headings[key],
+            "detected_document_type": key,
+            "classification_basis": "heading",
+        }
     if len(headings) > 1:
-        return {"document_title": None, "detected_document_type": "unknown", "classification_basis": "conflicting_headings"}
+        return {
+            "document_title": None,
+            "detected_document_type": "unknown",
+            "classification_basis": "conflicting_headings",
+        }
     scores = {key: sum(bool(re.search(cue, combined, re.I)) for cue in cues) for key, cues in CUES.items()}
     ordered = sorted(scores, key=scores.get, reverse=True)
     key = ordered[0]
     if scores[key] >= 2 and scores[key] >= scores[ordered[1]] + 1:
         return {"document_title": None, "detected_document_type": key, "classification_basis": "content"}
-    return {"document_title": None, "detected_document_type": "unknown", "classification_basis": "insufficient_evidence"}
+    return {
+        "document_title": None,
+        "detected_document_type": "unknown",
+        "classification_basis": "insufficient_evidence",
+    }

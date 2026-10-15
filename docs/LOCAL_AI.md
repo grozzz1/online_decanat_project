@@ -49,7 +49,7 @@ GGUF проверяется по SHA256 из метаданных выбранн
 Температура — 0, seed — 42; `/no_think`, `--reasoning off` и
 `chat_template_kwargs.enable_thinking=false`. Сервер держит модель загруженной
 между запросами. Параметры клиента настраиваются через `.env`; образец без секретов —
-[.env.ai.example](.env.ai.example). `LOCAL_AI_ENABLED=0` выключает генерацию.
+[.env.example](../.env.example). `LOCAL_AI_ENABLED=0` выключает генерацию.
 HTTP-клиент разрешает только loopback, не использует системный прокси и не следует
 перенаправлениям. Промпты, OCR и данные документов не отправляются на сайты загрузки моделей.
 
@@ -122,7 +122,7 @@ HTTP-клиент разрешает только loopback, не использ�
 ## Повторение измерений
 
 ```powershell
-$dataset = 'C:\Users\timof\Downloads\online-dean-participants-v1'
+$dataset = 'C:\path\to\online-dean-participants-v1'
 $env:LOCAL_AI_ENABLED = '1'
 .\.venv\Scripts\python.exe scripts/benchmark_ai.py extraction --dataset $dataset
 .\.venv\Scripts\python.exe scripts/benchmark_ai.py qa --dataset $dataset --force
@@ -157,4 +157,4 @@ $env:LOCAL_AI_ENABLED = '0'
 Браузерные проверки требуют `requirements-dev.txt` и установленного Chrome:
 `tests/browser_local_ai.py`, `tests/browser_document_types.py`, `tests/browser_visuals.py`.
 
-Результаты и ограничения измерений: [benchmark_results/report.md](benchmark_results/report.md).
+Результаты и ограничения измерений: [сводка](benchmarks/README.md). Полный сгенерированный отчёт находится локально в `benchmark_results/report.md`.

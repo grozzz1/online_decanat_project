@@ -2,17 +2,23 @@ from functools import wraps
 from hmac import compare_digest
 from io import BytesIO
 from secrets import token_hex
+
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.serving import WSGIRequestHandler, make_server
+
+from utils.document_fields import DOCUMENT_SCHEMAS, normalize_document_type
+from utils.documents import validate_document
 from utils.keyboards import APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
 from utils.users import get_name
-from utils.documents import validate_document
-from utils.document_fields import DOCUMENT_SCHEMAS, normalize_document_type
+
 from .service import WebService
 
-
-MODES = {"question": DEAN_QUESTION, "application": SEND_APPLICATION, "application_question": APPLICATION_QUESTION}
+MODES = {
+    "question": DEAN_QUESTION,
+    "application": SEND_APPLICATION,
+    "application_question": APPLICATION_QUESTION,
+}
 
 
 def create_app(bot, loop, dean_chat_id):
@@ -48,7 +54,9 @@ def create_app(bot, loop, dean_chat_id):
                 csrf = request.headers.get("X-CSRF-Token", "")
                 origin = request.headers.get("Origin")
 
-                if not compare_digest(csrf.encode(), login["csrf"].encode()) or (origin and origin != request.host_url.rstrip("/")):
+                if not compare_digest(csrf.encode(), login["csrf"].encode()) or (
+                    origin and origin != request.host_url.rstrip("/")
+                ):
                     abort(403)
 
             return view(*args, **kwargs)
@@ -61,11 +69,19 @@ def create_app(bot, loop, dean_chat_id):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        )
 
         if response.status_code in (400, 409) and getattr(g, "login", None) is not None:
             details = response.get_json(silent=True) or {}
-            service.call(service.audit(g.login["user_id"], "Ошибка запроса на сайте", f"{request.path}\n{details.get('error', '')}"))
+            service.call(
+                service.audit(
+                    g.login["user_id"],
+                    "Ошибка запроса на сайте",
+                    f"{request.path}\n{details.get('error', '')}",
+                )
+            )
 
         return response
 
@@ -100,7 +116,14 @@ def create_app(bot, loop, dean_chat_id):
     def session_info():
         user_id = g.login["user_id"]
         user = service.store.get_user(user_id)
-        return jsonify(user={"name": get_name(user), "username": user.username, "photo": service.store.get_avatar(user_id) is not None}, csrf=g.login["csrf"])
+        return jsonify(
+            user={
+                "name": get_name(user),
+                "username": user.username,
+                "photo": service.store.get_avatar(user_id) is not None,
+            },
+            csrf=g.login["csrf"],
+        )
 
     @app.get("/api/profile/photo")
     @signed_in
@@ -171,7 +194,9 @@ def create_app(bot, loop, dean_chat_id):
             application_type = ""
 
         try:
-            request_id = service.call(service.submit(g.login["user_id"], mode, text, application_type, photo, mimetype))
+            request_id = service.call(
+                service.submit(g.login["user_id"], mode, text, application_type, photo, mimetype)
+            )
         except ValueError as error:
             return jsonify(error=str(error)), 409
 
@@ -194,8 +219,15 @@ def create_app(bot, loop, dean_chat_id):
         if not isinstance(data, dict):
             return jsonify(error="Укажи тип документа."), 400
         try:
-            service.call(service.change_type(g.login["user_id"], request_id, data.get("document_type"),
-                                           data.get("mode"), data.get("text", "")))
+            service.call(
+                service.change_type(
+                    g.login["user_id"],
+                    request_id,
+                    data.get("document_type"),
+                    data.get("mode"),
+                    data.get("text", ""),
+                )
+            )
         except LookupError:
             abort(404)
         except ValueError as error:
@@ -223,7 +255,9 @@ def create_app(bot, loop, dean_chat_id):
         if not isinstance(data, dict) or type(data.get("type_mismatch_confirmed", False)) is not bool:
             return jsonify(error="Укажи подтверждение типа как true или false."), 400
         try:
-            service.call(service.confirm(g.login["user_id"], request_id, data.get("type_mismatch_confirmed", False)))
+            service.call(
+                service.confirm(g.login["user_id"], request_id, data.get("type_mismatch_confirmed", False))
+            )
         except LookupError:
             abort(404)
         except ValueError as error:

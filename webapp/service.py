@@ -1,13 +1,15 @@
 from asyncio import Lock, create_task, run_coroutine_threadsafe, to_thread
 from io import BytesIO
+
 from utils import delivery
 from utils.bot import current_web_user
-from utils.keyboards import answer_web_student_menu
-from utils.ocr import analyze_document_async, reprocess_document
-from utils.users import get_name
 from utils.document_fields import document_label, empty_extraction, normalize_document_type
 from utils.document_logging import log_document_failure, log_document_result
+from utils.keyboards import answer_web_student_menu
+from utils.ocr import analyze_document_async, reprocess_document
 from utils.question_answering import answer_question_async, format_answer
+from utils.users import get_name
+
 from .store import WebStore
 
 
@@ -38,12 +40,16 @@ class WebService:
         except Exception as error:
             self.bot.log_error(error, "Не удалось получить фото профиля для сайта")
 
-        self.bot.write_log(f"Создана ссылка для входа на сайт\nПользователь: {get_name(user)}\nID пользователя: {user.id}")
+        self.bot.write_log(
+            f"Создана ссылка для входа на сайт\nПользователь: {get_name(user)}\nID пользователя: {user.id}"
+        )
         return f"http://localhost:5000/login?code={code}"
 
     async def audit(self, user_id, action, text=""):
         user = self.store.get_user(user_id)
-        self.bot.write_log(f"{action}\nИсточник: сайт\nПользователь: {get_name(user)}\nID пользователя: {user_id}\n\n{text}")
+        self.bot.write_log(
+            f"{action}\nИсточник: сайт\nПользователь: {get_name(user)}\nID пользователя: {user_id}\n\n{text}"
+        )
 
     async def report_error(self, error, user_id=None):
         if user_id is not None:
@@ -65,15 +71,30 @@ class WebService:
             request_id = self.store.create_request(user_id, mode, text, application_type, photo, mimetype)
             body = text if mode == "question" else f"{application_type}\n\n{text}".strip()
             self.store.add_message(user_id, "student", body, request_id, photo=photo is not None)
-            await self.audit(user_id, "Пользователь → сайт", f"Обращение: {request_id}\n{body}" + ("\nПрикреплено фото." if photo else ""))
+            await self.audit(
+                user_id,
+                "Пользователь → сайт",
+                f"Обращение: {request_id}\n{body}" + ("\nПрикреплено фото." if photo else ""),
+            )
             task = create_task(self.process(user_id, request_id))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
             return request_id
 
     def save_analysis(self, request_id, analysis):
-        keys = ("recognized", "ocr_text", "visuals", "validation", "fields", "extraction", "document_type",
-                "selected_document_type", "detected_document_type", "document_title", "document_type_matches_selection")
+        keys = (
+            "recognized",
+            "ocr_text",
+            "visuals",
+            "validation",
+            "fields",
+            "extraction",
+            "document_type",
+            "selected_document_type",
+            "detected_document_type",
+            "document_title",
+            "document_type_matches_selection",
+        )
         changes = {key: analysis[key] for key in keys}
         if "previews" in analysis:
             changes["previews"] = analysis["previews"]
@@ -91,13 +112,25 @@ class WebService:
                 raise LookupError("Обращение не найдено.")
             if item["status"] != "needs_review":
                 raise ValueError("Изменение типа доступно только до отправки документа.")
-            errors = [error for error in item["extraction"].get("errors", []) if error["stage"] != "extraction"]
-            analysis = await to_thread(reprocess_document, item["ocr_text"], item["visuals"], selected, errors,
-                                       cached_extraction=item["extraction"])
+            errors = [
+                error for error in item["extraction"].get("errors", []) if error["stage"] != "extraction"
+            ]
+            analysis = await to_thread(
+                reprocess_document,
+                item["ocr_text"],
+                item["visuals"],
+                selected,
+                errors,
+                cached_extraction=item["extraction"],
+            )
             self.save_analysis(request_id, analysis)
-            self.store.update_request(request_id, application_type=document_label(selected), mode=mode,
-                                      type_mismatch_confirmed=False,
-                                      text=text.strip() if mode == "application_question" else "")
+            self.store.update_request(
+                request_id,
+                application_type=document_label(selected),
+                mode=mode,
+                type_mismatch_confirmed=False,
+                text=text.strip() if mode == "application_question" else "",
+            )
             log_document_result(analysis["extraction"], self.bot.write_log, "web")
             return request_id
 
@@ -117,8 +150,13 @@ class WebService:
                 raise ValueError("Напиши вопрос перед отправкой документа.")
             if any(request["status"] == "processing" for request in self.store.snapshot(user_id)["requests"]):
                 raise ValueError("Подожди завершения текущей обработки.")
-            self.store.update_request(request_id, status="processing", retry_allowed=False,
-                                      type_mismatch_confirmed=mismatch and override, failure_message="")
+            self.store.update_request(
+                request_id,
+                status="processing",
+                retry_allowed=False,
+                type_mismatch_confirmed=mismatch and override,
+                failure_message="",
+            )
             task = create_task(self.process(user_id, request_id, confirmed=True))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
@@ -127,24 +165,47 @@ class WebService:
     async def process(self, user_id, request_id, confirmed=False):
         item = self.store.get_request(user_id, request_id)
         user = self.store.get_user(user_id)
-        token = current_web_user.set({"user": user, "request_id": request_id, "application_type": item["application_type"]})
+        token = current_web_user.set(
+            {"user": user, "request_id": request_id, "application_type": item["application_type"]}
+        )
 
         try:
-            markup = answer_web_student_menu(self.bot.token, request_id) if item["mode"] != "application" else None
+            markup = (
+                answer_web_student_menu(self.bot.token, request_id) if item["mode"] != "application" else None
+            )
 
             if item["mode"] == "question":
                 await delivery.send_question(self.bot, self.dean_chat_id, user, item["text"], markup, "сайт")
             else:
                 with BytesIO(item["photo"]) as photo:
                     try:
-                        analysis = None if confirmed else await analyze_document_async(photo, item["selected_document_type"])
+                        analysis = (
+                            None
+                            if confirmed
+                            else await analyze_document_async(photo, item["selected_document_type"])
+                        )
                         if confirmed and item["document_type"] != item["selected_document_type"]:
-                            errors = [error for error in item["extraction"].get("errors", []) if error["stage"] != "extraction"]
-                            analysis = await to_thread(reprocess_document, item["ocr_text"], item["visuals"], item["selected_document_type"],
-                                                       errors, use_selected_type=True, cached_extraction=item["extraction"])
-                            analysis["extraction"]["type_mismatch_confirmed"] = item["type_mismatch_confirmed"]
+                            errors = [
+                                error
+                                for error in item["extraction"].get("errors", [])
+                                if error["stage"] != "extraction"
+                            ]
+                            analysis = await to_thread(
+                                reprocess_document,
+                                item["ocr_text"],
+                                item["visuals"],
+                                item["selected_document_type"],
+                                errors,
+                                use_selected_type=True,
+                                cached_extraction=item["extraction"],
+                            )
+                            analysis["extraction"]["type_mismatch_confirmed"] = item[
+                                "type_mismatch_confirmed"
+                            ]
                     except Exception as error:
-                        failed = empty_extraction(item["document_type"], [{"stage": "ocr", "code": type(error).__name__}])
+                        failed = empty_extraction(
+                            item["document_type"], [{"stage": "ocr", "code": type(error).__name__}]
+                        )
                         failed["field_statuses"] = {name: "unknown" for name in failed["fields"]}
                         self.store.update_request(request_id, fields=failed["fields"], extraction=failed)
                         log_document_failure(item["document_type"], error, self.bot.write_log, "web")
@@ -155,37 +216,61 @@ class WebService:
                     item = self.store.get_request(user_id, request_id)
                     if not confirmed and item["document_type_matches_selection"] is False:
                         self.store.update_request(request_id, status="needs_review")
-                        self.store.add_message(user_id, "bot", "Документ обработан. Проверь определённый тип и подтверди отправку.", request_id)
+                        self.store.add_message(
+                            user_id,
+                            "bot",
+                            "Документ обработан. Проверь определённый тип и подтверди отправку.",
+                            request_id,
+                        )
                         return
                     recognized = item["recognized"]
                     await delivery.send_application(
-                        self.bot, self.dean_chat_id, user, photo, document_label(item["document_type"]), recognized,
+                        self.bot,
+                        self.dean_chat_id,
+                        user,
+                        photo,
+                        document_label(item["document_type"]),
+                        recognized,
                         item["text"] if item["mode"] == "application_question" else None,
-                        markup, "сайт", visuals=item["visuals"], mimetype=item["mimetype"],
+                        markup,
+                        "сайт",
+                        visuals=item["visuals"],
+                        mimetype=item["mimetype"],
                         progress=item["delivery_progress"],
                     )
 
             self.store.mark_sent(request_id)
-            text = "Документ отправлен в деканат." if item["mode"] == "application" else "Вопрос отправлен в деканат. Ответ появится здесь, в чате."
+            text = (
+                "Документ отправлен в деканат."
+                if item["mode"] == "application"
+                else "Вопрос отправлен в деканат. Ответ появится здесь, в чате."
+            )
             self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", f"Обращение: {request_id}\n\n{text}")
             if item["mode"] in ("application_question", "question") and item["text"]:
                 await self.answer_ai(user_id, request_id, item["text"])
         except Exception as error:
             progress = item.get("delivery_progress", {})
-            retry_allowed = bool(item.get("visuals")) and bool(item.get("extraction")) and not progress.get("uncertain")
+            retry_allowed = (
+                bool(item.get("visuals")) and bool(item.get("extraction")) and not progress.get("uncertain")
+            )
             # A successful Telegram receipt is final even if subsequent logging fails.
             if progress.get("complete"):
                 self.store.mark_sent(request_id)
                 return
             self.store.update_request(request_id, status="failed", retry_allowed=retry_allowed)
             self.bot.log_error(error, "Ошибка отправки обращения с сайта")
-            text = ("Не удалось отправить обращение. Можно повторить отправку сохранённого документа."
-                    if retry_allowed else "Не удалось подтвердить отправку. Проверь получение в деканате перед новой отправкой.")
+            text = (
+                "Не удалось отправить обращение. Можно повторить отправку сохранённого документа."
+                if retry_allowed
+                else "Не удалось подтвердить отправку. Проверь получение в деканате перед новой отправкой."
+            )
             if item["mode"] == "question":
                 text = "Не удалось отправить вопрос. Попробуй ещё раз чуть позже."
             elif not item.get("visuals"):
-                text = "Не удалось обработать документ. Проверь файл и настройку OCR перед повторной загрузкой."
+                text = (
+                    "Не удалось обработать документ. Проверь файл и настройку OCR перед повторной загрузкой."
+                )
             self.store.update_request(request_id, failure_message=text)
             self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", text)
@@ -223,11 +308,18 @@ class WebService:
         self.store.update_request(request_id, ai_status="processing", ai_answer=None)
         try:
             item = self.store.get_request(user_id, request_id)
-            answer = await answer_question_async({"question_id": request_id + "-question", "question": text}, item["extraction"])
+            answer = await answer_question_async(
+                {"question_id": request_id + "-question", "question": text}, item["extraction"]
+            )
             self.store.update_request(request_id, ai_status="done", ai_answer=answer)
             self.store.add_message(user_id, "bot", format_answer(answer), request_id)
         except Exception as error:
             # AI failure must never change the delivery state or expose document content in logs.
             self.store.update_request(request_id, ai_status="failed")
-            self.store.add_message(user_id, "bot", "AI-помощник не смог проверить ответ. Попробуй позже или обратись в деканат.", request_id)
+            self.store.add_message(
+                user_id,
+                "bot",
+                "AI-помощник не смог проверить ответ. Попробуй позже или обратись в деканат.",
+                request_id,
+            )
             self.bot.write_log("AI question failed: " + type(error).__name__)

@@ -1,0 +1,200 @@
+{
+  "protocol_revision": "b3d3587",
+  "protocol_hashes": {
+    "extraction": [
+      "97b18c9adc435b292b1ab6ed079f6fc87bc22d4d495c1710ed5892284c9e3c39"
+    ],
+    "qa": [
+      "46b48fac06756842d2ecfdadefc442fd234f066de38451b7f3874ff3ea967c51"
+    ]
+  },
+  "model_probes": {
+    "ok": false,
+    "scenarios": 6,
+    "failed": [
+      "separate_dates"
+    ]
+  },
+  "fields": [
+    {
+      "approach": "regex",
+      "documents": 30,
+      "unknown_visual_fields": 0,
+      "llm_documents": 0,
+      "requested_fields": 0,
+      "recovered_fields": 0,
+      "rejected_values": 0,
+      "technical_failures": 0,
+      "fields": 280,
+      "correct": 279,
+      "missing_values": 25,
+      "missed_present_fields": 0,
+      "accuracy_percent": 99.64285714285714,
+      "mean_seconds": 1.9840849000002587
+    },
+    {
+      "approach": "hybrid",
+      "documents": 30,
+      "unknown_visual_fields": 0,
+      "llm_documents": 17,
+      "requested_fields": 25,
+      "recovered_fields": 0,
+      "rejected_values": 0,
+      "technical_failures": 0,
+      "fields": 280,
+      "correct": 279,
+      "missing_values": 25,
+      "missed_present_fields": 0,
+      "accuracy_percent": 99.64285714285714,
+      "mean_seconds": 7.599270483333627
+    }
+  ],
+  "qa": [
+    {
+      "approach": "qwen_baseline",
+      "llm_requests": 30,
+      "questions": 120,
+      "answerable_correct": 102,
+      "value_correct": 84,
+      "sources_correct": 39,
+      "fully_correct": 34,
+      "unsupported_positive_answers": 62,
+      "hallucinations": 22,
+      "validation_format_errors": 30,
+      "wrong_source_sets": 81,
+      "fabricated_sources": 2,
+      "false_refusals": 1,
+      "without_llm": 0,
+      "rag_calls": 120,
+      "technical_failures": 0,
+      "json_errors": 0,
+      "rejected_answers": 86,
+      "corrected_answers": 0,
+      "refusals": 31,
+      "answerable_correct_percent": 85.0,
+      "value_correct_percent": 70.0,
+      "sources_correct_percent": 32.5,
+      "fully_correct_percent": 28.333333333333332,
+      "mean_seconds": 20.17132973583339
+    },
+    {
+      "approach": "qwen_strict",
+      "llm_requests": 30,
+      "questions": 120,
+      "answerable_correct": 95,
+      "value_correct": 89,
+      "sources_correct": 39,
+      "fully_correct": 39,
+      "unsupported_positive_answers": 26,
+      "hallucinations": 1,
+      "validation_format_errors": 6,
+      "wrong_source_sets": 81,
+      "fabricated_sources": 0,
+      "false_refusals": 24,
+      "without_llm": 0,
+      "rag_calls": 120,
+      "technical_failures": 0,
+      "json_errors": 0,
+      "rejected_answers": 85,
+      "corrected_answers": 0,
+      "refusals": 70,
+      "answerable_correct_percent": 79.16666666666667,
+      "value_correct_percent": 74.16666666666667,
+      "sources_correct_percent": 32.5,
+      "fully_correct_percent": 32.5,
+      "mean_seconds": 21.890575988333392
+    },
+    {
+      "approach": "python_rag_qwen",
+      "llm_requests": 0,
+      "questions": 120,
+      "answerable_correct": 120,
+      "value_correct": 120,
+      "sources_correct": 120,
+      "fully_correct": 120,
+      "unsupported_positive_answers": 0,
+      "hallucinations": 0,
+      "validation_format_errors": 0,
+      "wrong_source_sets": 0,
+      "fabricated_sources": 0,
+      "false_refusals": 0,
+      "without_llm": 120,
+      "rag_calls": 60,
+      "technical_failures": 0,
+      "json_errors": 0,
+      "rejected_answers": 0,
+      "corrected_answers": 0,
+      "refusals": 47,
+      "answerable_correct_percent": 100.0,
+      "value_correct_percent": 100.0,
+      "sources_correct_percent": 100.0,
+      "fully_correct_percent": 100.0,
+      "mean_seconds": 0.0015991233332897537
+    }
+  ],
+  "rag": [
+    {
+      "retrieval": "bm25",
+      "questions_with_rule_sources": 60,
+      "recall_at_3": 0.4166666666666667,
+      "recall_at_5": 0.4166666666666667,
+      "all_sources_at_3": 0.5,
+      "all_sources_at_5": 0.5,
+      "fabricated_sources": 0,
+      "non_reference_sources_at_5": 270,
+      "precision_at_5": 0.1
+    },
+    {
+      "retrieval": "routed_bm25",
+      "questions_with_rule_sources": 60,
+      "recall_at_3": 1.0,
+      "recall_at_5": 1.0,
+      "all_sources_at_3": 1.0,
+      "all_sources_at_5": 1.0,
+      "fabricated_sources": 0,
+      "non_reference_sources_at_5": 228,
+      "precision_at_5": 0.24
+    }
+  ],
+  "official_evaluation": {
+    "qwen_baseline": {
+      "exit_code": 2,
+      "format_valid": false,
+      "documents": null,
+      "questions": null,
+      "field_accuracy_macro": null,
+      "validation_exact_match": null,
+      "question_exact_match": null
+    },
+    "qwen_strict": {
+      "exit_code": 2,
+      "format_valid": false,
+      "documents": null,
+      "questions": null,
+      "field_accuracy_macro": null,
+      "validation_exact_match": null,
+      "question_exact_match": null
+    },
+    "python_rag_qwen": {
+      "exit_code": 0,
+      "format_valid": true,
+      "documents": 30,
+      "questions": 120,
+      "field_accuracy_macro": 0.996667,
+      "validation_exact_match": 1.0,
+      "question_exact_match": 1.0
+    }
+  },
+  "model": {
+    "engine_release": "b11429",
+    "model_repository": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
+    "model_revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
+    "model_file": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    "model_sha256": "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597",
+    "quantization": "Q4_K_M"
+  },
+  "runtime": {
+    "backend": "cpu",
+    "threads": 4
+  }
+}

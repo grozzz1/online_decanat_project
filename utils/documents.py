@@ -1,11 +1,11 @@
 """Decode supported uploads into canonical RGB pages (also used for previews)."""
+
 from io import BytesIO
 from math import isfinite
 from threading import RLock
 
-from PIL import Image, ImageOps, UnidentifiedImageError
 import pypdfium2 as pdfium
-
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 MAX_BYTES = 10 * 1024 * 1024
 MAX_PAGES = 12
@@ -50,7 +50,12 @@ def validate_document(data: bytes) -> str:
             mimetype = Image.MIME[image.format]
             image.verify()
             return mimetype
-    except (UnidentifiedImageError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning) as error:
+    except (
+        UnidentifiedImageError,
+        OSError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as error:
         raise ValueError("Не удалось открыть изображение документа.") from error
 
 

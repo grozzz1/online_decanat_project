@@ -1,4 +1,5 @@
 """Install pinned, portable local inference artifacts; no document data leaves the PC."""
+
 import argparse
 import hashlib
 import json
@@ -25,7 +26,8 @@ def download(url, target, expected_sha=None):
                 while chunk := response.read(4 * 1024 * 1024):
                     output.write(chunk)
         partial.replace(target)
-    digest = hashlib.file_digest(target.open("rb"), "sha256").hexdigest()
+    with target.open("rb") as stream:
+        digest = hashlib.file_digest(stream, "sha256").hexdigest()
     if expected_sha and digest != expected_sha:
         raise RuntimeError(f"SHA256 mismatch: {target.name}; remove the corrupt artifact and retry")
     return digest
@@ -48,11 +50,21 @@ def setup(gpu=False):
         entries = json.load(response)
     entry = next(item for item in entries if item["path"] == MODEL)
     expected = entry["lfs"]["oid"]
-    print(f"Downloading {REPO}@{REVISION}: {MODEL}, {entry['size']/1e9:.2f} GB", flush=True)
-    model_sha = download(f"https://huggingface.co/{REPO}/resolve/{REVISION}/{MODEL}", ROOT / "models" / MODEL, expected)
-    metadata = {"engine_release": RELEASE, "engine_backend": backend, "engine_archive_sha256": engine_sha,
-                "model_repository": REPO, "model_revision": REVISION, "model_file": MODEL,
-                "model_sha256": model_sha, "quantization": "Q4_K_M", "thinking": False}
+    print(f"Downloading {REPO}@{REVISION}: {MODEL}, {entry['size'] / 1e9:.2f} GB", flush=True)
+    model_sha = download(
+        f"https://huggingface.co/{REPO}/resolve/{REVISION}/{MODEL}", ROOT / "models" / MODEL, expected
+    )
+    metadata = {
+        "engine_release": RELEASE,
+        "engine_backend": backend,
+        "engine_archive_sha256": engine_sha,
+        "model_repository": REPO,
+        "model_revision": REVISION,
+        "model_file": MODEL,
+        "model_sha256": model_sha,
+        "quantization": "Q4_K_M",
+        "thinking": False,
+    }
     (ROOT / "models" / "installation.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     print("Installed. Start: python scripts/start_local_ai.py", flush=True)
 

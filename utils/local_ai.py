@@ -1,17 +1,19 @@
 """One shared, bounded client for a loopback-only llama.cpp/Ollama server."""
-from collections import Counter, deque
-from dataclasses import dataclass
-from functools import lru_cache
+
 import http.client
 import json
 import logging
+from collections import Counter, deque
+from dataclasses import dataclass
+from functools import lru_cache
 from os import getenv
 from threading import BoundedSemaphore, Lock
 from time import monotonic, perf_counter
 from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
-from utils import config  # Load the project's .env without logging it.
+
+from utils import config  # noqa: F401 -- load the project .env before reading AI settings.
 
 logger = logging.getLogger("decanat.ai")
 logger.setLevel(logging.INFO)
@@ -36,13 +38,17 @@ class AIConfig:
 
     @classmethod
     def from_env(cls):
-        return cls(enabled=getenv("LOCAL_AI_ENABLED", "1").lower() in ("1", "true", "yes"),
-                   endpoint=getenv("LOCAL_AI_URL", cls.endpoint), engine=getenv("LOCAL_AI_ENGINE", cls.engine),
-                   model=getenv("LOCAL_AI_MODEL", cls.model), timeout=float(getenv("LOCAL_AI_TIMEOUT", "90")),
-                   queue_timeout=float(getenv("LOCAL_AI_QUEUE_TIMEOUT", "5")),
-                   max_tokens=int(getenv("LOCAL_AI_MAX_TOKENS", "512")),
-                   context_chars=int(getenv("LOCAL_AI_CONTEXT_CHARS", "12000")),
-                   cooldown=float(getenv("LOCAL_AI_COOLDOWN", "30")))
+        return cls(
+            enabled=getenv("LOCAL_AI_ENABLED", "1").lower() in ("1", "true", "yes"),
+            endpoint=getenv("LOCAL_AI_URL", cls.endpoint),
+            engine=getenv("LOCAL_AI_ENGINE", cls.engine),
+            model=getenv("LOCAL_AI_MODEL", cls.model),
+            timeout=float(getenv("LOCAL_AI_TIMEOUT", "90")),
+            queue_timeout=float(getenv("LOCAL_AI_QUEUE_TIMEOUT", "5")),
+            max_tokens=int(getenv("LOCAL_AI_MAX_TOKENS", "512")),
+            context_chars=int(getenv("LOCAL_AI_CONTEXT_CHARS", "12000")),
+            cooldown=float(getenv("LOCAL_AI_COOLDOWN", "30")),
+        )
 
 
 class AIError(RuntimeError):
@@ -57,9 +63,13 @@ def strict_json(text):
                 raise AIError("duplicate_json_key")
             result[key] = value
         return result
+
     try:
-        return json.loads(text, object_pairs_hook=pairs,
-                          parse_constant=lambda _: (_ for _ in ()).throw(AIError("nonfinite_json")))
+        return json.loads(
+            text,
+            object_pairs_hook=pairs,
+            parse_constant=lambda _: (_ for _ in ()).throw(AIError("nonfinite_json")),
+        )
     except (ValueError, TypeError, RecursionError) as error:
         raise AIError("invalid_json") from error
 
@@ -68,7 +78,13 @@ class LocalAI:
     def __init__(self, settings=None):
         self.config = settings or AIConfig.from_env()
         url = urlsplit(self.config.endpoint)
-        if url.scheme != "http" or url.hostname not in ("127.0.0.1", "localhost", "::1") or url.username or url.query or url.path not in ("", "/"):
+        if (
+            url.scheme != "http"
+            or url.hostname not in ("127.0.0.1", "localhost", "::1")
+            or url.username
+            or url.query
+            or url.path not in ("", "/")
+        ):
             raise ValueError("LOCAL_AI_URL must be an HTTP loopback origin")
         if self.config.engine not in ("llamacpp", "ollama"):
             raise ValueError("Unsupported LOCAL_AI_ENGINE")
@@ -97,7 +113,12 @@ class LocalAI:
     def health(self):
         try:
             result = self._request("/api/tags" if self.config.engine == "ollama" else "/health", timeout=3)
-            return {"available": True, "model": self.config.model, "engine": self.config.engine, "server": result}
+            return {
+                "available": True,
+                "model": self.config.model,
+                "engine": self.config.engine,
+                "server": result,
+            }
         except (OSError, AIError, http.client.HTTPException):
             return {"available": False, "model": self.config.model, "engine": self.config.engine}
 
@@ -111,20 +132,45 @@ class LocalAI:
         started = perf_counter()
         record = {"purpose": purpose, "model": self.config.model, "engine": self.config.engine}
         try:
-            messages = [{"role": "system", "content": system},
-                        {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n/no_think"}]
+            messages = [
+                {"role": "system", "content": system},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False) + "\n/no_think"},
+            ]
             tokens = min(max_tokens or self.config.max_tokens, 2048)
             if self.config.engine == "ollama":
-                data = self._request("/api/chat", {"model": self.config.model, "messages": messages,
-                    "stream": False, "think": False, "format": schema, "keep_alive": "-1m",
-                    "options": {"temperature": 0, "num_predict": tokens, "num_ctx": 4096, "seed": 42}})
+                data = self._request(
+                    "/api/chat",
+                    {
+                        "model": self.config.model,
+                        "messages": messages,
+                        "stream": False,
+                        "think": False,
+                        "format": schema,
+                        "keep_alive": "-1m",
+                        "options": {"temperature": 0, "num_predict": tokens, "num_ctx": 4096, "seed": 42},
+                    },
+                )
                 content = data["message"]["content"]
-                record.update(prompt_tokens=data.get("prompt_eval_count"), completion_tokens=data.get("eval_count"))
+                record.update(
+                    prompt_tokens=data.get("prompt_eval_count"), completion_tokens=data.get("eval_count")
+                )
             else:
-                data = self._request("/v1/chat/completions", {"model": self.config.model, "messages": messages,
-                    "stream": False, "temperature": 0, "seed": 42, "max_tokens": tokens,
-                    "chat_template_kwargs": {"enable_thinking": False},
-                    "response_format": {"type": "json_schema", "json_schema": {"name": "result", "strict": True, "schema": schema}}})
+                data = self._request(
+                    "/v1/chat/completions",
+                    {
+                        "model": self.config.model,
+                        "messages": messages,
+                        "stream": False,
+                        "temperature": 0,
+                        "seed": 42,
+                        "max_tokens": tokens,
+                        "chat_template_kwargs": {"enable_thinking": False},
+                        "response_format": {
+                            "type": "json_schema",
+                            "json_schema": {"name": "result", "strict": True, "schema": schema},
+                        },
+                    },
+                )
                 content = data["choices"][0]["message"]["content"]
                 record.update(data.get("usage", {}))
                 if data["choices"][0].get("finish_reason") == "length":
@@ -151,7 +197,12 @@ class LocalAI:
             with self.lock:
                 self.records.append(record)
                 self.counters[record.get("status", "error")] += 1
-            logger.info("inference purpose=%s status=%s seconds=%.3f", purpose, record.get("status"), record["seconds"])
+            logger.info(
+                "inference purpose=%s status=%s seconds=%.3f",
+                purpose,
+                record.get("status"),
+                record["seconds"],
+            )
             self.gate.release()
 
 

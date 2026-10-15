@@ -1,17 +1,17 @@
 """Optional browser check against a local Flask instance; never contacts Telegram."""
+
 from io import BytesIO
 from pathlib import Path
 from threading import Thread
+from unittest.mock import patch
 
 from playwright.sync_api import sync_playwright
 from werkzeug.serving import make_server
 
-from test_document_cv import encoded, page
-from test_document_integration import WebIntegrationTests
+from tests.fixtures import TEXTS, encoded, page
+from tests.test_document_integration import WebIntegrationTests
 from utils.document_cv import analyze_document_visuals
 from utils.document_fields import DOCUMENT_SCHEMAS
-from test_document_fields import TEXTS
-from unittest.mock import patch
 
 
 def run():
@@ -45,7 +45,10 @@ def run():
             link = tab.locator(".telegram-bot-link")
             assert link.inner_text() == "нашему боту в Telegram"
             assert link.get_attribute("href") == "https://t.me/OnlineDecanatBot"
-            assert tab.locator(".login-card > p").inner_text() == "Отправь /start нашему боту в Telegram и открой ссылку из его ответа. Она откроет твой личный кабинет."
+            assert (
+                tab.locator(".login-card > p").inner_text()
+                == "Отправь /start нашему боту в Telegram и открой ссылку из его ответа. Она откроет твой личный кабинет."
+            )
             tab.goto(f"{base}/login?code={code}")
             tab.locator('[data-mode="application"]').click()
             assert tab.locator("#document-type option").count() == 2
@@ -56,15 +59,30 @@ def run():
                 assert tab.locator("#document-type option").count() == 3
                 tab.locator('[data-mode="application"]').click()
                 assert tab.locator("#document-type option").count() == 2
-                assert tab.locator("#document-type").input_value() == ("academic_leave_application" if key == "study_certificate" else key)
+                assert tab.locator("#document-type").input_value() == (
+                    "academic_leave_application" if key == "study_certificate" else key
+                )
             tab.locator("#preview-page").wait_for(state="visible")
-            tab.wait_for_function("() => document.getElementById('preview-image').complete && document.getElementById('preview-image').naturalWidth > 0")
+            tab.wait_for_function(
+                "() => document.getElementById('preview-image').complete && document.getElementById('preview-image').naturalWidth > 0"
+            )
             tab.locator("#preview-page").select_option("2")
-            tab.wait_for_function("() => document.getElementById('preview-image').getAttribute('src').includes('/pages/2/photo') && document.getElementById('preview-image').complete")
-            assert tab.locator("#original-document").get_attribute("href").endswith(f"/{pdf_response.json['request_id']}/photo")
+            tab.wait_for_function(
+                "() => document.getElementById('preview-image').getAttribute('src').includes('/pages/2/photo') && document.getElementById('preview-image').complete"
+            )
+            assert (
+                tab.locator("#original-document")
+                .get_attribute("href")
+                .endswith(f"/{pdf_response.json['request_id']}/photo")
+            )
             tab.locator(".message-photo").first.click()
-            tab.wait_for_function("() => document.getElementById('visual-results').textContent.includes('Подпись студента: найдены')")
-            tab.wait_for_function("() => document.getElementById('preview-image').complete && document.getElementById('preview-image').naturalWidth === 800")
+            tab.wait_for_function(
+                "() => document.getElementById('visual-results').textContent.includes('Подпись студента: найдены')"
+            )
+            tab.wait_for_function(
+                "() => document.getElementById('preview-image').complete && document.getElementById('preview-image').naturalWidth === 800"
+            )
+
             def overlay():
                 return tab.evaluate("""() => {
                     const image = document.getElementById('preview-image');
@@ -100,14 +118,19 @@ def run():
                     return {green, blue, painted, width: image.clientWidth, height: image.clientHeight,
                         canvasWidth: canvas.clientWidth, canvasHeight: canvas.clientHeight, signatureBorder};
                 }""")
+
             tab.wait_for_function("() => document.getElementById('visual-overlay').width > 0")
             initial = overlay()
             assert initial["green"] > 0 and initial["blue"] > 0, initial
             assert initial["signatureBorder"], initial
-            assert initial["width"] == initial["canvasWidth"] and initial["height"] == initial["canvasHeight"], initial
+            assert (
+                initial["width"] == initial["canvasWidth"] and initial["height"] == initial["canvasHeight"]
+            ), initial
             tab.locator("#zoom-in").click()
             enlarged = overlay()
-            assert enlarged["width"] > initial["width"] and enlarged["green"] > 0 and enlarged["blue"] > 0, enlarged
+            assert enlarged["width"] > initial["width"] and enlarged["green"] > 0 and enlarged["blue"] > 0, (
+                enlarged
+            )
             assert enlarged["signatureBorder"], enlarged
             tab.locator("#show-visuals").uncheck()
             assert overlay()["painted"] == 0
@@ -123,7 +146,9 @@ def run():
             Path(".tmp").mkdir(exist_ok=True)
             tab.screenshot(path=".tmp/cv-viewer.png", full_page=True)
             # Changing the selected document must clear all stale boxes immediately.
-            tab.locator("#document").set_input_files({"name": "new.png", "mimeType": "image/png", "buffer": encoded(page()[0])})
+            tab.locator("#document").set_input_files(
+                {"name": "new.png", "mimeType": "image/png", "buffer": encoded(page()[0])}
+            )
             assert overlay()["painted"] == 0
             for key, schema in DOCUMENT_SCHEMAS.items():
                 target_mode = "application_question" if key == "study_certificate" else "application"
@@ -131,9 +156,17 @@ def run():
                 if key == "study_certificate":
                     tab.locator("#question").fill("Содержит ли документ все обязательные сведения?")
                 tab.locator("#document-type").select_option(key)
-                tab.locator("#document").set_input_files({"name": "document.png", "mimeType": "image/png", "buffer": encoded(page()[0])})
-                with patch("utils.ocr.pytesseract.image_to_string", return_value=TEXTS[key]), \
-                     tab.expect_response(lambda response: response.url.endswith("/api/requests") and response.request.method == "POST") as submitted:
+                tab.locator("#document").set_input_files(
+                    {"name": "document.png", "mimeType": "image/png", "buffer": encoded(page()[0])}
+                )
+                with (
+                    patch("utils.ocr.pytesseract.image_to_string", return_value=TEXTS[key]),
+                    tab.expect_response(
+                        lambda response: (
+                            response.url.endswith("/api/requests") and response.request.method == "POST"
+                        )
+                    ) as submitted,
+                ):
                     tab.locator("#send-request").click()
                     response = submitted.value
                     assert response.status == 202
@@ -148,7 +181,9 @@ def run():
                     assert item["fields"]["student_name"] is not None
             assert not errors, errors
             browser.close()
-        print("Browser OK: all three document types submitted, login link, PDF pages, overlays, zoom, mobile resize and stale-box reset.")
+        print(
+            "Browser OK: all three document types submitted, login link, PDF pages, overlays, zoom, mobile resize and stale-box reset."
+        )
     finally:
         if server:
             server.shutdown()

@@ -134,7 +134,7 @@ OCR-текст, CV-результаты, исходные документы, п
 Установка зависимостей и Tesseract описана в [DOCUMENT_CV.md](DOCUMENT_CV.md).
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 ```
 
 Автоматические тесты включают прежние проверки CV/PDF и новые сценарии:
@@ -149,8 +149,7 @@ python -m unittest discover -s tests -v
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-$env:PYTHONPATH = "$PWD"
-python tests/browser_visuals.py
+python -m tests.browser_visuals
 ```
 
 В Chrome проверены три варианта списка, сохранение выбора между режимами,

@@ -1,20 +1,15 @@
 from telebot.types import Message
-from utils.document_fields import DOCUMENT_SCHEMAS
-from utils.document_rules import preliminary_check
+
+from utils.document_validation import validate_document_fields as validate_document_fields
+from utils.document_validation import validate_document_visuals as validate_document_visuals
 
 
 def is_text(message: Message) -> bool:
-    return message.content_type == "text" and bool(
-        message.text and message.text.strip()
-    )
+    return message.content_type == "text" and bool(message.text and message.text.strip())
 
 
 def is_photo(message: Message) -> bool:
-    return (
-        message.content_type == "photo"
-        and bool(message.photo)
-        and message.media_group_id is None
-    )
+    return message.content_type == "photo" and bool(message.photo) and message.media_group_id is None
 
 
 def has_caption(message: Message) -> bool:
@@ -23,32 +18,11 @@ def has_caption(message: Message) -> bool:
 
 def is_document(message: Message) -> bool:
     return is_photo(message) or (
-        message.content_type == "document" and message.document is not None
+        message.content_type == "document"
+        and message.document is not None
         and message.media_group_id is None
-        and (message.document.mime_type in ("image/jpeg", "image/png", "application/pdf")
-             or (message.document.file_name or "").lower().endswith((".jpg", ".jpeg", ".png", ".pdf")))
+        and (
+            message.document.mime_type in ("image/jpeg", "image/png", "application/pdf")
+            or (message.document.file_name or "").lower().endswith((".jpg", ".jpeg", ".png", ".pdf"))
+        )
     )
-
-
-def validate_document_visuals(application_type, visuals):
-    # The repository has no rules requiring stamps/signatures for any document type.
-    # Report the evidence; do not create rejection rules based on CV guesses.
-    return {"application_type": application_type, "status": "informational", "blocking": False,
-            "required_elements": [], "stamp": visuals["stamp"],
-            "student_signature": visuals["student_signature"],
-            "manual_review": bool(visuals["warnings"]) or any(
-                item["status"] == "uncertain" or item.get("role") == "unknown"
-                for item in visuals["detections"])}
-
-
-def validate_document_fields(extraction):
-    """Schema-specific consistency checks; requiredness is not defined by this project."""
-    schema = DOCUMENT_SCHEMAS[extraction["document_type"]]
-    start, end = schema["period"]
-    fields = extraction["fields"]
-    issues = [{"field": name, "code": status} for name, status in extraction["field_statuses"].items() if status != "found"]
-    if fields[start] and fields[end] and fields[start] > fields[end]:
-        issues.append({"fields": [start, end], "code": "reversed_period"})
-    check = preliminary_check(extraction)
-    return {"document_type": extraction["document_type"], "status": "informational", "blocking": False,
-            "required_fields": check["required_fields"], "sources": check["sources"], "issues": issues}

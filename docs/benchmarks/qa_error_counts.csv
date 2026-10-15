@@ -1,0 +1,8 @@
+﻿experiment,reason,questions
+qwen_baseline,contradicts_python,31
+qwen_baseline,inconsistent_refusal,24
+qwen_baseline,rule_source_missing,4
+qwen_baseline,unsupported_answer,27
+qwen_strict,contradicts_python,8
+qwen_strict,inconsistent_refusal,55
+qwen_strict,rule_source_missing,18

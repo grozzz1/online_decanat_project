@@ -3,15 +3,15 @@
 Coordinates are [x1, y1, x2, y2] in the supplied RGB page, numbered from one.
 OCR words use the same coordinate frame. OpenCV preprocessing never changes OCR input.
 """
+
+import re
 from difflib import SequenceMatcher
 from math import pi
 from pathlib import Path
-import re
 
 import cv2
 import numpy as np
 from PIL import Image
-
 
 MAX_SIDE = 1600
 ACCEPT_SCORE = 0.42
@@ -44,22 +44,40 @@ def find_signature_anchors(words, width, height):
                 continue
             x1, y1, x2, y2 = word["bbox"]
             text_height = max(1, y2 - y1)
-            nearby = [other for other in line[max(0, index - 2):index + 3]
-                      if max(0, other["bbox"][0] - x2, x1 - other["bbox"][2]) < text_height * 6]
+            nearby = [
+                other
+                for other in line[max(0, index - 2) : index + 3]
+                if max(0, other["bbox"][0] - x2, x1 - other["bbox"][2]) < text_height * 6
+            ]
             values = [_normalized(other["text"]) for other in nearby]
             student = any(_matches(v, ("студент", "студента", "заявитель", "заявителя")) for v in values)
             has_signature = any(_matches(v, ("подпись", "signature")) for v in values)
             staff = any(_matches(v, ("ректор", "декан", "сотрудник", "преподаватель")) for v in values)
-            if not signature and (not person or y1 < height * .40):
+            if not signature and (not person or y1 < height * 0.40):
                 continue
-            box = [min(other["bbox"][0] for other in nearby), min(other["bbox"][1] for other in nearby),
-                   max(other["bbox"][2] for other in nearby), max(other["bbox"][3] for other in nearby)]
-            margin = max(width * .35, text_height * 12)
+            box = [
+                min(other["bbox"][0] for other in nearby),
+                min(other["bbox"][1] for other in nearby),
+                max(other["bbox"][2] for other in nearby),
+                max(other["bbox"][3] for other in nearby),
+            ]
+            margin = max(width * 0.35, text_height * 12)
             specimen = any(_matches(v, ("образец", "пример", "sample", "specimen")) for v in values)
-            anchors.append({"bbox": box, "specimen": specimen,
-                            "role": "student" if student and has_signature and not staff and not specimen else "unknown",
-                            "roi": [max(0, box[0] - margin), max(0, box[1] - text_height * 8),
-                                    min(width, box[2] + margin), min(height, box[3] + text_height * 8)]})
+            anchors.append(
+                {
+                    "bbox": box,
+                    "specimen": specimen,
+                    "role": "student"
+                    if student and has_signature and not staff and not specimen
+                    else "unknown",
+                    "roi": [
+                        max(0, box[0] - margin),
+                        max(0, box[1] - text_height * 8),
+                        min(width, box[2] + margin),
+                        min(height, box[3] + text_height * 8),
+                    ],
+                }
+            )
     return anchors
 
 
@@ -72,17 +90,26 @@ def _overlap(a, b):
 def _deduplicate(detections):
     kept = []
     for candidate in sorted(detections, key=lambda item: item["confidence"], reverse=True):
-        if not any(candidate["type"] == other["type"] and candidate["page"] == other["page"]
-                   and _overlap(candidate["bbox"], other["bbox"]) > .55 for other in kept):
+        if not any(
+            candidate["type"] == other["type"]
+            and candidate["page"] == other["page"]
+            and _overlap(candidate["bbox"], other["bbox"]) > 0.55
+            for other in kept
+        ):
             kept.append(candidate)
     return kept[:40]
 
 
 def _candidate(kind, box, score, page, evidence, role=None):
-    result = {"type": kind, "detected": True, "bbox": [int(v) for v in box],
-              "confidence": round(float(min(.95, score)), 3), "page": page,
-              "status": "detected" if score >= CONFIDENT_SCORE else "uncertain",
-              "evidence": {key: round(float(value), 3) for key, value in evidence.items()}}
+    result = {
+        "type": kind,
+        "detected": True,
+        "bbox": [int(v) for v in box],
+        "confidence": round(float(min(0.95, score)), 3),
+        "page": page,
+        "status": "detected" if score >= CONFIDENT_SCORE else "uncertain",
+        "evidence": {key: round(float(value), 3) for key, value in evidence.items()},
+    }
     if role is not None:
         result["role"] = role
         result["role_status"] = "contextual" if role == "student" else "unknown"
@@ -102,14 +129,14 @@ def _stamp_candidates(rgb, ink, page):
         contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
-            if not (.035 * min(width, height) <= min(w, h) and max(w, h) <= .35 * max(width, height)):
+            if not (0.035 * min(width, height) <= min(w, h) and max(w, h) <= 0.35 * max(width, height)):
                 continue
-            if not .50 <= w / h <= 2.0 or len(contour) < 12:
+            if not 0.50 <= w / h <= 2.0 or len(contour) < 12:
                 continue
             area, perimeter = cv2.contourArea(contour), cv2.arcLength(contour, True)
             if area <= 0 or perimeter <= 0:
                 continue
-            roundness = min(1, 4 * pi * area / perimeter ** 2)
+            roundness = min(1, 4 * pi * area / perimeter**2)
             ellipse = cv2.fitEllipse(contour)
             (cx, cy), (ew, eh), angle = ellipse
             if min(ew, eh) <= 0:
@@ -120,27 +147,47 @@ def _stamp_candidates(rgb, ink, page):
             py = -points[:, 0] * np.sin(radians) + points[:, 1] * np.cos(radians)
             radius = np.sqrt((px / (ew / 2)) ** 2 + (py / (eh / 2)) ** 2)
             fit = max(0, 1 - float(np.mean(np.abs(radius - 1))) * 4)
-            if fit < .68 or roundness < .38 or area / (w * h) < .45:
+            if fit < 0.68 or roundness < 0.38 or area / (w * h) < 0.45:
                 continue
-            inset = mask[y + h // 4:y + 3 * h // 4, x + w // 4:x + 3 * w // 4]
+            inset = mask[y + h // 4 : y + 3 * h // 4, x + w // 4 : x + 3 * w // 4]
             interior = cv2.countNonZero(inset) / max(1, inset.size)
-            density = cv2.countNonZero(mask[y:y + h, x:x + w]) / (w * h)
-            if density > .65:  # solid logos / coloured blobs
+            density = cv2.countNonZero(mask[y : y + h, x : x + w]) / (w * h)
+            if density > 0.65:  # solid logos / coloured blobs
                 continue
-            blue = cv2.countNonZero(preferred[y:y + h, x:x + w]) / max(1, cv2.countNonZero(mask[y:y + h, x:x + w]))
+            blue = cv2.countNonZero(preferred[y : y + h, x : x + w]) / max(
+                1, cv2.countNonZero(mask[y : y + h, x : x + w])
+            )
             # Interior ink gives evidence of lettering or nested rings; plain circles remain uncertain.
-            score = .20 + .18 * roundness + .18 * fit + .18 * min(1, interior / .08)
-            score += (.13 if blue > .5 else .07) if colour else 0
-            if interior < .008:
-                score = min(score, .55)
-            detections.append(_candidate("stamp", [x, y, x + w, y + h], score, page,
-                                         {"circularity": roundness, "ellipse_fit": fit,
-                                          "interior_ink": interior, "colour": colour, "preferred_ink": blue}))
+            score = 0.20 + 0.18 * roundness + 0.18 * fit + 0.18 * min(1, interior / 0.08)
+            score += (0.13 if blue > 0.5 else 0.07) if colour else 0
+            if interior < 0.008:
+                score = min(score, 0.55)
+            detections.append(
+                _candidate(
+                    "stamp",
+                    [x, y, x + w, y + h],
+                    score,
+                    page,
+                    {
+                        "circularity": roundness,
+                        "ellipse_fit": fit,
+                        "interior_ink": interior,
+                        "colour": colour,
+                        "preferred_ink": blue,
+                    },
+                )
+            )
     # Broken monochrome rings: Hough proposes circles, annular angular coverage verifies them.
-    circles = cv2.HoughCircles(cv2.GaussianBlur(ink, (5, 5), 1), cv2.HOUGH_GRADIENT, dp=1.5,
-                               minDist=max(30, min(width, height) // 12), param1=100, param2=45,
-                               minRadius=max(15, int(min(width, height) * .025)),
-                               maxRadius=max(16, int(min(width, height) * .16)))
+    circles = cv2.HoughCircles(
+        cv2.GaussianBlur(ink, (5, 5), 1),
+        cv2.HOUGH_GRADIENT,
+        dp=1.5,
+        minDist=max(30, min(width, height) // 12),
+        param1=100,
+        param2=45,
+        minRadius=max(15, int(min(width, height) * 0.025)),
+        maxRadius=max(16, int(min(width, height) * 0.16)),
+    )
     if circles is not None:
         gx = cv2.Sobel(ink, cv2.CV_32F, 1, 0, ksize=3)
         gy = cv2.Sobel(ink, cv2.CV_32F, 0, 1, ksize=3)
@@ -150,22 +197,33 @@ def _stamp_candidates(rgb, ink, page):
             yy, xx = np.nonzero(ink[y1:y2, x1:x2])
             dx, dy = xx + x1 - cx, yy + y1 - cy
             distances = np.sqrt(dx * dx + dy * dy)
-            ring = (distances > radius * .88) & (distances < radius * 1.10)
+            ring = (distances > radius * 0.88) & (distances < radius * 1.10)
             angles = ((np.arctan2(dy[ring], dx[ring]) + pi) / (2 * pi) * 24).astype(int) % 24
             coverage = len(np.unique(angles)) / 24
             # Text rows can fill every angular bin. A true rim also has radial edge normals.
             edge_y, edge_x = np.nonzero((gx[y1:y2, x1:x2] ** 2 + gy[y1:y2, x1:x2] ** 2) > 10000)
             edx, edy = edge_x + x1 - cx, edge_y + y1 - cy
-            edge_radius = np.sqrt(edx ** 2 + edy ** 2)
-            rim = (edge_radius > radius * .94) & (edge_radius < radius * 1.06)
+            edge_radius = np.sqrt(edx**2 + edy**2)
+            rim = (edge_radius > radius * 0.94) & (edge_radius < radius * 1.06)
             vx, vy = gx[edge_y + y1, edge_x + x1], gy[edge_y + y1, edge_x + x1]
-            alignment = np.abs(vx * edx + vy * edy) / np.maximum(1, np.sqrt(vx ** 2 + vy ** 2) * edge_radius)
-            radial_fraction = np.count_nonzero(rim & (alignment > .90)) / max(1, np.count_nonzero(rim))
-            interior = np.count_nonzero(distances < radius * .6) / max(1, pi * (radius * .6) ** 2)
-            if coverage >= .75 and radial_fraction >= .65 and .012 <= interior <= .50:
-                detections.append(_candidate("stamp", [x1, y1, x2, y2], .43 + .15 * coverage, page,
-                                             {"ring_coverage": coverage, "radial_edges": radial_fraction,
-                                              "interior_ink": interior, "hough": 1}))
+            alignment = np.abs(vx * edx + vy * edy) / np.maximum(1, np.sqrt(vx**2 + vy**2) * edge_radius)
+            radial_fraction = np.count_nonzero(rim & (alignment > 0.90)) / max(1, np.count_nonzero(rim))
+            interior = np.count_nonzero(distances < radius * 0.6) / max(1, pi * (radius * 0.6) ** 2)
+            if coverage >= 0.75 and radial_fraction >= 0.65 and 0.012 <= interior <= 0.50:
+                detections.append(
+                    _candidate(
+                        "stamp",
+                        [x1, y1, x2, y2],
+                        0.43 + 0.15 * coverage,
+                        page,
+                        {
+                            "ring_coverage": coverage,
+                            "radial_edges": radial_fraction,
+                            "interior_ink": interior,
+                            "hough": 1,
+                        },
+                    )
+                )
     return _deduplicate(detections)
 
 
@@ -185,18 +243,25 @@ def _signature_candidates(ink, words, stamps, anchors, page):
             x1, y1, x2, y2 = word["bbox"]
             # OCR sometimes reads a piece of handwriting as a word. Preserve it
             # only when an irregular connected stroke extends beyond that box.
-            ids = np.unique(labels[max(0, y1):y2, max(0, x1):x2])
+            ids = np.unique(labels[max(0, y1) : y2, max(0, x1) : x2])
             text_height = max(1, y2 - y1)
             handwriting = any(
                 stat[cv2.CC_STAT_WIDTH] > text_height * 3
                 and stat[cv2.CC_STAT_HEIGHT] > text_height * 1.4
-                and (stat[cv2.CC_STAT_TOP] < y1 - text_height * .2
-                     or stat[cv2.CC_STAT_TOP] + stat[cv2.CC_STAT_HEIGHT] > y2 + text_height * .2)
-                for index in ids if index for stat in [ink_stats[index]])
-            if handwriting and any(_overlap(word["bbox"], a["roi"]) > .9
-                                   and _overlap(word["bbox"], a["bbox"]) < .1 for a in anchors):
+                and (
+                    stat[cv2.CC_STAT_TOP] < y1 - text_height * 0.2
+                    or stat[cv2.CC_STAT_TOP] + stat[cv2.CC_STAT_HEIGHT] > y2 + text_height * 0.2
+                )
+                for index in ids
+                if index
+                for stat in [ink_stats[index]]
+            )
+            if handwriting and any(
+                _overlap(word["bbox"], a["roi"]) > 0.9 and _overlap(word["bbox"], a["bbox"]) < 0.1
+                for a in anchors
+            ):
                 continue
-            remaining[max(0, y1 - 2):min(height, y2 + 2), max(0, x1 - 2):min(width, x2 + 2)] = 0
+            remaining[max(0, y1 - 2) : min(height, y2 + 2), max(0, x1 - 2) : min(width, x2 + 2)] = 0
     for stamp in stamps:
         x1, y1, x2, y2 = stamp["bbox"]
         remaining[y1:y2, x1:x2] = 0
@@ -214,13 +279,20 @@ def _signature_candidates(ink, words, stamps, anchors, page):
         for contour in contours:
             x, y, w, h = cv2.boundingRect(contour)
             # Dilation joins nearby components; its artificial border is not ink.
-            yy, xx = np.nonzero(crop[y:y + h, x:x + w])
+            yy, xx = np.nonzero(crop[y : y + h, x : x + w])
             if not len(xx):
                 continue
-            x, y, w, h = x + int(xx.min()), y + int(yy.min()), int(xx.max() - xx.min() + 1), int(yy.max() - yy.min() + 1)
-            if not (width * .04 < w < width * .48 and height * .012 < h < height * .14 and 1.3 < w / h < 12):
+            x, y, w, h = (
+                x + int(xx.min()),
+                y + int(yy.min()),
+                int(xx.max() - xx.min() + 1),
+                int(yy.max() - yy.min() + 1),
+            )
+            if not (
+                width * 0.04 < w < width * 0.48 and height * 0.012 < h < height * 0.14 and 1.3 < w / h < 12
+            ):
                 continue
-            piece = crop[y:y + h, x:x + w]
+            piece = crop[y : y + h, x : x + w]
             count, _, stats, _ = cv2.connectedComponentsWithStats(piece, connectivity=8)
             components = [stat for stat in stats[1:] if stat[cv2.CC_STAT_AREA] >= 4]
             if not components or len(components) > 35:
@@ -230,54 +302,90 @@ def _signature_candidates(ink, words, stamps, anchors, page):
             heights = [stat[cv2.CC_STAT_HEIGHT] for stat in components]
             variation = float(np.std(heights) / max(1, np.mean(heights)))
             # Separate regular glyphs, isolated characters, and line remnants are weak evidence.
-            if not .025 < density < .42 or longest < .45:
+            if not 0.025 < density < 0.42 or longest < 0.45:
                 continue
             occupied_rows = np.count_nonzero(np.count_nonzero(piece, axis=1) > 0) / h
-            if occupied_rows < .65:
+            if occupied_rows < 0.65:
                 continue
             box = [x + rx1, y + ry1, x + rx1 + w, y + ry1 + h]
-            nearby = [anchor for anchor in anchors if _overlap(box, anchor["roi"]) > .75
-                      and _overlap(box, anchor["bbox"]) < .20]
-            nearby.sort(key=lambda a: abs((a["bbox"][0] + a["bbox"][2]) / 2 - (box[0] + box[2]) / 2) / width
-                        + abs((a["bbox"][1] + a["bbox"][3]) / 2 - (box[1] + box[3]) / 2) / height)
+            nearby = [
+                anchor
+                for anchor in anchors
+                if _overlap(box, anchor["roi"]) > 0.75 and _overlap(box, anchor["bbox"]) < 0.20
+            ]
+            nearby.sort(
+                key=lambda a: (
+                    abs((a["bbox"][0] + a["bbox"][2]) / 2 - (box[0] + box[2]) / 2) / width
+                    + abs((a["bbox"][1] + a["bbox"][3]) / 2 - (box[1] + box[3]) / 2) / height
+                )
+            )
             role = nearby[0]["role"] if nearby else "unknown"
             # Conflicting labels cannot establish student ownership.
-            if nearby and any(a["role"] != role and _overlap(nearby[0]["bbox"], a["bbox"]) > .5 for a in nearby[1:]):
+            if nearby and any(
+                a["role"] != role and _overlap(nearby[0]["bbox"], a["bbox"]) > 0.5 for a in nearby[1:]
+            ):
                 role = "unknown"
-            score = .25 + .20 * longest + .10 * min(1, variation) + .10 * occupied_rows
-            score += .18 if nearby else 0
+            score = 0.25 + 0.20 * longest + 0.10 * min(1, variation) + 0.10 * occupied_rows
+            score += 0.18 if nearby else 0
             if not nearby:
-                score = min(score, .60)
+                score = min(score, 0.60)
             if nearby and nearby[0].get("specimen"):
-                score = min(score, .60)
-            if box[1] < height * .45 and not nearby:
+                score = min(score, 0.60)
+            if box[1] < height * 0.45 and not nearby:
                 continue
-            padding = max(2, round(max(width, height) * .002))
-            box = [max(0, box[0] - padding), max(0, box[1] - padding),
-                   min(width, box[2] + padding), min(height, box[3] + padding)]
+            padding = max(2, round(max(width, height) * 0.002))
+            box = [
+                max(0, box[0] - padding),
+                max(0, box[1] - padding),
+                min(width, box[2] + padding),
+                min(height, box[3] + padding),
+            ]
             clipped = box[0] == 0 or box[1] == 0 or box[2] == width or box[3] == height
             if clipped:
-                score = min(score, .60)
-            detections.append(_candidate("signature", box, score, page,
-                                         {"connected_width": longest, "height_variation": variation,
-                                          "ink_density": density, "occupied_rows": occupied_rows,
-                                          "label_context": bool(nearby), "boundary_clipped": clipped}, role))
+                score = min(score, 0.60)
+            detections.append(
+                _candidate(
+                    "signature",
+                    box,
+                    score,
+                    page,
+                    {
+                        "connected_width": longest,
+                        "height_variation": variation,
+                        "ink_density": density,
+                        "occupied_rows": occupied_rows,
+                        "label_context": bool(nearby),
+                        "boundary_clipped": clipped,
+                    },
+                    role,
+                )
+            )
     return _deduplicate(detections)
 
 
 def summarize_visuals(detections, pages, warnings=None):
     def best(kind, role=None):
-        choices = [item for item in detections if item["type"] == kind and (role is None or item.get("role") == role)]
+        choices = [
+            item for item in detections if item["type"] == kind and (role is None or item.get("role") == role)
+        ]
         if choices:
             return dict(max(choices, key=lambda item: item["confidence"]))
         return {"detected": False, "bbox": None, "confidence": 0.0, "page": None, "status": "not_detected"}
+
     unknown = any(item["type"] == "signature" and item.get("role") == "unknown" for item in detections)
     student = best("signature", "student")
     if not student["detected"] and unknown:
         student["status"] = "unknown"
-    return {"stamp": best("stamp"), "student_signature": student, "signature": best("signature"),
-            "detections": detections, "pages": pages, "warnings": warnings or [],
-            "score_kind": "heuristic_v1", "authenticity_verified": False}
+    return {
+        "stamp": best("stamp"),
+        "student_signature": student,
+        "signature": best("signature"),
+        "detections": detections,
+        "pages": pages,
+        "warnings": warnings or [],
+        "score_kind": "heuristic_v1",
+        "authenticity_verified": False,
+    }
 
 
 def analyze_document_visuals(image: Image.Image, ocr_words=None, page=1, debug_path=None) -> dict:
@@ -293,18 +401,37 @@ def analyze_document_visuals(image: Image.Image, ocr_words=None, page=1, debug_p
     denoised = cv2.GaussianBlur(contrast, (3, 3), 0)
     ink = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 31, 12)
     sx, sy = width / original_width, height / original_height
-    words = [{**word, "bbox": [round(word["bbox"][0] * sx), round(word["bbox"][1] * sy),
-                               round(word["bbox"][2] * sx), round(word["bbox"][3] * sy)]} for word in (ocr_words or [])]
+    words = [
+        {
+            **word,
+            "bbox": [
+                round(word["bbox"][0] * sx),
+                round(word["bbox"][1] * sy),
+                round(word["bbox"][2] * sx),
+                round(word["bbox"][3] * sy),
+            ],
+        }
+        for word in (ocr_words or [])
+    ]
     anchors = find_signature_anchors(words, width, height)
     stamps = _stamp_candidates(rgb, ink, page)
-    detections = [item for item in stamps + _signature_candidates(ink, words, stamps, anchors, page)
-                  if item["confidence"] >= ACCEPT_SCORE]
+    detections = [
+        item
+        for item in stamps + _signature_candidates(ink, words, stamps, anchors, page)
+        if item["confidence"] >= ACCEPT_SCORE
+    ]
     for item in detections:
         box = item["bbox"]
-        item["bbox"] = [max(0, int(np.floor(box[0] / sx))), max(0, int(np.floor(box[1] / sy))),
-                        min(original_width, int(np.ceil(box[2] / sx))), min(original_height, int(np.ceil(box[3] / sy)))]
-    result = summarize_visuals(detections, [{"page": page, "width": original_width, "height": original_height,
-                                           "analysis_status": "complete"}])
+        item["bbox"] = [
+            max(0, int(np.floor(box[0] / sx))),
+            max(0, int(np.floor(box[1] / sy))),
+            min(original_width, int(np.ceil(box[2] / sx))),
+            min(original_height, int(np.ceil(box[3] / sy))),
+        ]
+    result = summarize_visuals(
+        detections,
+        [{"page": page, "width": original_width, "height": original_height, "analysis_status": "complete"}],
+    )
     if debug_path is not None:
         save_debug_image(image, result, debug_path, page)
     return result
@@ -321,7 +448,7 @@ def save_debug_image(image, result, path, page=1):
             colour = (0, 200, 230)
         cv2.rectangle(canvas, (x1, y1), (x2, y2), colour, 2)
         label = f"{detection['type']} {detection.get('role', '')} {detection['confidence']:.2f}"
-        cv2.putText(canvas, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, .5, colour, 1)
+        cv2.putText(canvas, label, (x1, max(15, y1 - 5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, colour, 1)
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     # imencode + pathlib support non-ASCII Windows paths.

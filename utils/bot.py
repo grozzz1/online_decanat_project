@@ -1,16 +1,18 @@
+import logging
 from asyncio import Queue, create_task, sleep
 from contextvars import ContextVar
 from datetime import datetime
 from re import sub
 from traceback import format_exception
+
 from aiohttp import ClientError
 from telebot import util
 from telebot.async_telebot import AsyncTeleBot, ExceptionHandler, logger
 from telebot.asyncio_helper import ApiException, ApiTelegramException, RequestTimeout
 from telebot.types import CallbackQuery, Message
+
 from utils.states import application_types, dean_replies, states
 from utils.users import get_name
-
 
 current_message: ContextVar[Message | None] = ContextVar("current_message", default=None)
 current_callback: ContextVar[CallbackQuery | None] = ContextVar("current_callback", default=None)
@@ -44,7 +46,7 @@ class Bot(AsyncTeleBot):
         text = f"{datetime.now():%d.%m.%Y %H:%M:%S}\n{text}"
         text = text.replace(self.token, "[токен бота]")
         text = sub(r"(code=)[A-Za-z0-9_-]+", r"\1[код входа]", text)
-        print(text, flush=True)
+        logging.getLogger("decanat.bot").info(text)
         self.log_queue.put_nowait(text)
 
     @staticmethod
@@ -104,8 +106,7 @@ class Bot(AsyncTeleBot):
 
     def log_callback(self, call):
         self.write_log(
-            f"Нажатие кнопки\nЧат: {call.message.chat.id}\n"
-            f"{self.get_context()}\nДанные кнопки: {call.data}"
+            f"Нажатие кнопки\nЧат: {call.message.chat.id}\n{self.get_context()}\nДанные кнопки: {call.data}"
         )
 
     def log_message(self, action, message):
@@ -115,10 +116,20 @@ class Bot(AsyncTeleBot):
         source = message if action == "Пользователь → бот" else None
         context = source or current_message.get()
         web = current_web_user.get()
-        document_context = current_ai_reply.get() or bool(web and web.get("application_type")) or bool(
-            context is not None and context.from_user is not None
-            and (context.chat.id, context.from_user.id) in application_types)
-        body = "Содержимое документа не записывается в журнал." if document_context else message.text or message.caption or "Без текста"
+        document_context = (
+            current_ai_reply.get()
+            or bool(web and web.get("application_type"))
+            or bool(
+                context is not None
+                and context.from_user is not None
+                and (context.chat.id, context.from_user.id) in application_types
+            )
+        )
+        body = (
+            "Содержимое документа не записывается в журнал."
+            if document_context
+            else message.text or message.caption or "Без текста"
+        )
         text = (
             f"{action}\n"
             f"Чат: {message.chat.id}\n"

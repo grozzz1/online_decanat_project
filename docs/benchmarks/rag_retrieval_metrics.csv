@@ -1,0 +1,3 @@
+﻿retrieval,questions_with_rule_sources,recall_at_3,recall_at_5,all_sources_at_3,all_sources_at_5,fabricated_sources,non_reference_sources_at_5,precision_at_5
+bm25,60,0.4166666666666667,0.4166666666666667,0.5,0.5,0,270,0.1
+routed_bm25,60,1.0,1.0,1.0,1.0,0,228,0.24

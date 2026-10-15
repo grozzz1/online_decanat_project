@@ -194,7 +194,7 @@ DOCUMENT_CV_DEBUG_DIR=.tmp/cv-debug
 Основные тесты используют стандартный `unittest`:
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -t . -v
 ```
 
 Регрессионные сценарии: печать и подпись вместе, каждый объект отдельно,
@@ -215,8 +215,7 @@ OCR в регрессионных и интеграционных тестах �
 
 ```powershell
 python -m pip install -r requirements-dev.txt
-$env:PYTHONPATH = "$PWD"
-python tests/browser_visuals.py
+python -m tests.browser_visuals
 ```
 
 Она поднимает отдельный локальный сервер с подставленным Telegram, проверяет

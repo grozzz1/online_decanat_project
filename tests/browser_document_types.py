@@ -1,4 +1,5 @@
 """Chrome checks against real Flask routes; OCR and Telegram transport are mocked."""
+
 from threading import Thread
 from unittest.mock import patch
 
@@ -6,9 +7,8 @@ from playwright.sync_api import sync_playwright
 from telebot.asyncio_helper import ApiTelegramException
 from werkzeug.serving import make_server
 
-from test_document_cv import encoded, page
-from test_document_fields import TEXTS
-from test_document_integration import WebIntegrationTests
+from tests.fixtures import TEXTS, encoded, page
+from tests.test_document_integration import WebIntegrationTests
 
 
 def run():
@@ -29,13 +29,21 @@ def run():
             image = encoded(page(signature=True)[0])
 
             def wait_status(request_id, status):
-                tab.wait_for_function("([id, status]) => requestsById.get(id)?.status === status && !busy",
-                                      arg=[request_id, status])
+                tab.wait_for_function(
+                    "([id, status]) => requestsById.get(id)?.status === status && !busy",
+                    arg=[request_id, status],
+                )
 
             def upload(ocr_text, status="needs_review"):
-                tab.locator("#document").set_input_files({"name": "document.png", "mimeType": "image/png", "buffer": image})
-                with patch("utils.ocr.pytesseract.image_to_string", return_value=ocr_text), \
-                     tab.expect_response(lambda r: r.url.endswith("/api/requests") and r.request.method == "POST") as submitted:
+                tab.locator("#document").set_input_files(
+                    {"name": "document.png", "mimeType": "image/png", "buffer": image}
+                )
+                with (
+                    patch("utils.ocr.pytesseract.image_to_string", return_value=ocr_text),
+                    tab.expect_response(
+                        lambda r: r.url.endswith("/api/requests") and r.request.method == "POST"
+                    ) as submitted,
+                ):
                     tab.locator("#send-request").click()
                     request_id = submitted.value.json()["request_id"]
                     wait_status(request_id, status)
@@ -103,8 +111,9 @@ def run():
             assert fixture.bot.send_photo.await_count == 4
 
             request_id = upload("СПРАВКА О ПРАКТИКЕ\n" + TEXTS["internship_certificate"])
-            fixture.bot.send_photo.side_effect = ApiTelegramException("sendPhoto", None,
-                {"error_code": 429, "description": "retry later"})
+            fixture.bot.send_photo.side_effect = ApiTelegramException(
+                "sendPhoto", None, {"error_code": 429, "description": "retry later"}
+            )
             tab.locator("#override-document-type").click()
             wait_status(request_id, "failed")
             assert tab.locator("#form-error").is_visible()
@@ -115,7 +124,9 @@ def run():
             assert fixture.bot.send_photo.await_count == 6
             assert not errors, errors
             browser.close()
-        print("Browser OK: override, retained selection/file, correct/wrong changes, unknown, matching, rejection/retry.")
+        print(
+            "Browser OK: override, retained selection/file, correct/wrong changes, unknown, matching, rejection/retry."
+        )
     finally:
         server.shutdown()
         server.server_close()
