@@ -112,8 +112,10 @@ async def accept_request(bot, message, key, dean_chat_id):
 
     clear_state(key)
     text = (
-        "Документ отправлен в деканат." if state == "application_photo"
-        else "Вопрос обработан AI-помощником." if state == "application_question"
+        "Документ отправлен в деканат."
+        if state == "application_photo"
+        else "Вопрос обработан AI-помощником."
+        if state == "application_question"
         else "Вопрос отправлен в деканат."
     )
     await bot.reply_to(message, text, reply_markup=main_menu)

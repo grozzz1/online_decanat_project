@@ -137,7 +137,9 @@ def run():
             with tab.expect_response(lambda r: r.url.endswith("/ask")) as asked:
                 tab.locator("#send-request").click()
             assert asked.value.status == 202
-            tab.wait_for_function("() => !busy && document.getElementById('ai-answer').textContent.includes('field:course')")
+            tab.wait_for_function(
+                "() => !busy && document.getElementById('ai-answer').textContent.includes('field:course')"
+            )
             assert not errors, errors
             browser.close()
         print(
