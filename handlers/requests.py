@@ -5,7 +5,7 @@ from telebot.asyncio_helper import ApiException, RequestTimeout
 
 from utils import delivery
 from utils.bot import current_ai_reply
-from utils.document_context import last_document, remember_document
+from utils.document_context import remember_document
 from utils.document_fields import document_label, normalize_document_type
 from utils.document_logging import log_document_failure, log_document_result
 from utils.documents import MAX_BYTES, validate_document
@@ -30,7 +30,6 @@ async def send_question(bot, message, dean_chat_id):
         message.text,
         answer_student_menu(bot.token, message),
     )
-    await send_ai_answer(bot, message, message.text, last_document((message.chat.id, message.from_user.id)))
 
 
 async def send_ai_answer(bot, message, text, extraction):
@@ -65,6 +64,10 @@ async def send_application(bot, message, key, dean_chat_id):
         log_document_result(analysis["extraction"], getattr(bot, "write_log", None))
         recognized = analysis["recognized"]
         question = message.caption if states[key] == "application_question" else None
+        if question is not None:
+            remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
+            await send_ai_answer(bot, message, question, analysis["extraction"])
+            return
         markup = answer_student_menu(bot.token, message) if question is not None else None
         await delivery.send_application(
             bot,
@@ -81,8 +84,6 @@ async def send_application(bot, message, key, dean_chat_id):
         for part in util.split_string(delivery.visual_summary(analysis["visuals"]), chars_per_string=4096):
             await bot.reply_to(message, part)
         remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
-        if question:
-            await send_ai_answer(bot, message, question, analysis["extraction"])
 
 
 async def accept_request(bot, message, key, dean_chat_id):
@@ -110,7 +111,13 @@ async def accept_request(bot, message, key, dean_chat_id):
         return
 
     clear_state(key)
-    text = "Документ отправлен в деканат." if state == "application_photo" else "Вопрос отправлен в деканат."
+    text = (
+        "Документ отправлен в деканат."
+        if state == "application_photo"
+        else "Вопрос обработан AI-помощником."
+        if state == "application_question"
+        else "Вопрос отправлен в деканат."
+    )
     await bot.reply_to(message, text, reply_markup=main_menu)
 
 

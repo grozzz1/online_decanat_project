@@ -78,6 +78,7 @@ class WebStore:
                 "mode": mode,
                 "text": text,
                 "application_type": application_type,
+                "filename": "",
                 "document_type": normalize_document_type(application_type),
                 "selected_document_type": normalize_document_type(application_type),
                 "detected_document_type": None,
@@ -94,6 +95,7 @@ class WebStore:
                 "recognized": "",
                 "visuals": None,
                 "validation": None,
+                "preliminary_check": None,
                 "previews": [],
                 "fields": {},
                 "extraction": None,
@@ -122,7 +124,7 @@ class WebStore:
         with self.lock:
             item = self.requests.get(request_id)
 
-            if item is None or item["mode"] == "application" or item["status"] == "failed":
+            if item is None or item["mode"] != "question" or item["status"] == "failed":
                 return None
 
             return item["user_id"]
@@ -137,12 +139,15 @@ class WebStore:
                         for key in (
                             "id",
                             "mode",
+                            "text",
+                            "filename",
                             "application_type",
                             "document_type",
                             "status",
                             "recognized",
                             "visuals",
                             "validation",
+                            "preliminary_check",
                             "mimetype",
                             "fields",
                             "extraction",

@@ -5,6 +5,7 @@ from utils import delivery
 from utils.bot import current_web_user
 from utils.document_fields import document_label, empty_extraction, normalize_document_type
 from utils.document_logging import log_document_failure, log_document_result
+from utils.document_policy import preliminary_check
 from utils.keyboards import answer_web_student_menu
 from utils.ocr import analyze_document_async, reprocess_document
 from utils.question_answering import answer_question_async, format_answer
@@ -57,8 +58,20 @@ class WebService:
 
         self.bot.log_error(error, "Ошибка сайта")
 
-    async def submit(self, user_id, mode, text, application_type, photo, mimetype):
+    async def submit(self, user_id, mode, text, application_type, photo, mimetype, filename=""):
+        if mode == "general_question":
+            mode = "question"
+        if mode not in ("question", "application", "application_question"):
+            raise ValueError("Выбери раздел обращения.")
+        if mode != "application" and (
+            not isinstance(text, str) or not text.strip() or len(text) > 4096 or text.lstrip().startswith("/")
+        ):
+            raise ValueError("Напиши вопрос обычным текстом, до 4096 символов.")
         if mode != "question":
+            if not photo:
+                raise ValueError("Прикрепи один документ JPG, PNG или PDF.")
+            if mode == "application":
+                text = ""
             if normalize_document_type(application_type) is None:
                 raise ValueError("Выбери поддерживаемый тип документа.")
             application_type = document_label(application_type)
@@ -69,6 +82,9 @@ class WebService:
                 raise ValueError("Подожди, пока отправится текущее обращение.")
 
             request_id = self.store.create_request(user_id, mode, text, application_type, photo, mimetype)
+            self.store.update_request(
+                request_id, filename=(filename or "document").replace("\\", "/").rsplit("/", 1)[-1][:255]
+            )
             body = text if mode == "question" else f"{application_type}\n\n{text}".strip()
             self.store.add_message(user_id, "student", body, request_id, photo=photo is not None)
             await self.audit(
@@ -96,6 +112,7 @@ class WebService:
             "document_type_matches_selection",
         )
         changes = {key: analysis[key] for key in keys}
+        changes["preliminary_check"] = preliminary_check(analysis["extraction"])
         if "previews" in analysis:
             changes["previews"] = analysis["previews"]
         self.store.update_request(request_id, **changes)
@@ -106,6 +123,8 @@ class WebService:
             raise ValueError("Выбери поддерживаемый тип документа и раздел.")
         if not isinstance(text, str) or len(text) > 4096 or text.lstrip().startswith("/"):
             raise ValueError("Вопрос должен быть обычным текстом до 4096 символов.")
+        if mode == "application_question" and not text.strip():
+            raise ValueError("Напиши вопрос по заявлению.")
         async with self.locks.setdefault(user_id, Lock()):
             item = self.store.get_request(user_id, request_id)
             if item is None:
@@ -129,7 +148,7 @@ class WebService:
                 application_type=document_label(selected),
                 mode=mode,
                 type_mismatch_confirmed=False,
-                text=text.strip() if mode == "application_question" else "",
+                text=text if mode == "application_question" else "",
             )
             log_document_result(analysis["extraction"], self.bot.write_log, "web")
             return request_id
@@ -146,8 +165,8 @@ class WebService:
             override = type_mismatch_confirmed is True or (retry and item["type_mismatch_confirmed"])
             if mismatch and not override:
                 raise ValueError("Подтверди выбранный тип жёлтой кнопкой или измени его в списке.")
-            if item["mode"] == "application_question" and not item["text"]:
-                raise ValueError("Напиши вопрос перед отправкой документа.")
+            if item["mode"] == "application_question" and not item["text"].strip():
+                raise ValueError("Напиши вопрос по заявлению.")
             if any(request["status"] == "processing" for request in self.store.snapshot(user_id)["requests"]):
                 raise ValueError("Подожди завершения текущей обработки.")
             self.store.update_request(
@@ -223,6 +242,10 @@ class WebService:
                             request_id,
                         )
                         return
+                    if item["mode"] == "application_question":
+                        self.store.update_request(request_id, status="checked")
+                        await self.answer_ai(user_id, request_id, item["text"])
+                        return
                     recognized = item["recognized"]
                     await delivery.send_application(
                         self.bot,
@@ -247,8 +270,6 @@ class WebService:
             )
             self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", f"Обращение: {request_id}\n\n{text}")
-            if item["mode"] in ("application_question", "question") and item["text"]:
-                await self.answer_ai(user_id, request_id, item["text"])
         except Exception as error:
             progress = item.get("delivery_progress", {})
             retry_allowed = (
@@ -288,17 +309,20 @@ class WebService:
         await self.audit(user_id, "Деканат → сайт", f"Обращение: {request_id}\n\n{text}")
 
     async def ask_ai(self, user_id, request_id, text):
-        if not isinstance(text, str) or not text.strip() or len(text) > 2000:
-            raise ValueError("Напиши вопрос длиной до 2000 символов.")
+        if not isinstance(text, str) or not text.strip() or len(text) > 4096:
+            raise ValueError("Напиши вопрос длиной до 4096 символов.")
         async with self.locks.setdefault(user_id, Lock()):
             item = self.store.get_request(user_id, request_id)
             if item is None:
                 raise LookupError("Документ не найден.")
-            if not item.get("extraction") or item["status"] == "processing":
-                raise ValueError("Дождись обработки документа.")
-            if item.get("ai_status") == "processing":
+            if item["mode"] != "application_question":
+                raise ValueError("AI-вопросы доступны только в разделе «Задать вопрос по заявлению».")
+            if not item.get("extraction") or item["status"] != "checked":
+                raise ValueError("Дождись обработки и подтверждения типа документа.")
+            if item["ai_status"] == "processing":
                 raise ValueError("Дождись ответа AI-помощника.")
             self.store.update_request(request_id, ai_status="processing", ai_answer=None)
+            self.store.add_message(user_id, "student", text.strip(), request_id)
             task = create_task(self.answer_ai(user_id, request_id, text.strip()))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
@@ -312,13 +336,13 @@ class WebService:
                 {"question_id": request_id + "-question", "question": text}, item["extraction"]
             )
             self.store.update_request(request_id, ai_status="done", ai_answer=answer)
-            self.store.add_message(user_id, "bot", format_answer(answer), request_id)
+            self.store.add_message(user_id, "ai", format_answer(answer), request_id)
         except Exception as error:
             # AI failure must never change the delivery state or expose document content in logs.
             self.store.update_request(request_id, ai_status="failed")
             self.store.add_message(
                 user_id,
-                "bot",
+                "ai",
                 "AI-помощник не смог проверить ответ. Попробуй позже или обратись в деканат.",
                 request_id,
             )
