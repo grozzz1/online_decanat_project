@@ -2,6 +2,8 @@ from datetime import datetime
 from secrets import token_urlsafe
 from threading import RLock
 
+from utils.document_fields import normalize_document_type
+
 
 class WebStore:
     def __init__(self):
@@ -76,10 +78,27 @@ class WebStore:
                 "mode": mode,
                 "text": text,
                 "application_type": application_type,
+                "document_type": normalize_document_type(application_type),
+                "selected_document_type": normalize_document_type(application_type),
+                "detected_document_type": None,
+                "document_title": None,
+                "document_type_matches_selection": None,
+                "type_mismatch_confirmed": False,
+                "retry_allowed": False,
+                "failure_message": "",
+                "delivery_progress": {},
+                "ocr_text": "",
                 "photo": photo,
                 "mimetype": mimetype,
                 "status": "processing",
                 "recognized": "",
+                "visuals": None,
+                "validation": None,
+                "previews": [],
+                "fields": {},
+                "extraction": None,
+                "ai_status": "idle",
+                "ai_answer": None,
             }
             return request_id
 
@@ -113,7 +132,32 @@ class WebStore:
             return {
                 "messages": [dict(message) for message in self.messages[user_id] if message["id"] > after],
                 "requests": [
-                    {key: item[key] for key in ("id", "mode", "application_type", "status", "recognized")}
-                    for item in self.requests.values() if item["user_id"] == user_id
+                    {
+                        key: item[key]
+                        for key in (
+                            "id",
+                            "mode",
+                            "application_type",
+                            "document_type",
+                            "status",
+                            "recognized",
+                            "visuals",
+                            "validation",
+                            "mimetype",
+                            "fields",
+                            "extraction",
+                            "selected_document_type",
+                            "detected_document_type",
+                            "document_title",
+                            "document_type_matches_selection",
+                            "type_mismatch_confirmed",
+                            "retry_allowed",
+                            "failure_message",
+                            "ai_status",
+                            "ai_answer",
+                        )
+                    }
+                    for item in self.requests.values()
+                    if item["user_id"] == user_id
                 ],
             }

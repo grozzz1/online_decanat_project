@@ -1,20 +1,23 @@
+import logging
 from asyncio import Queue, create_task, sleep
 from contextvars import ContextVar
 from datetime import datetime
 from re import sub
 from traceback import format_exception
+
 from aiohttp import ClientError
 from telebot import util
 from telebot.async_telebot import AsyncTeleBot, ExceptionHandler, logger
 from telebot.asyncio_helper import ApiException, ApiTelegramException, RequestTimeout
 from telebot.types import CallbackQuery, Message
+
 from utils.states import application_types, dean_replies, states
 from utils.users import get_name
-
 
 current_message: ContextVar[Message | None] = ContextVar("current_message", default=None)
 current_callback: ContextVar[CallbackQuery | None] = ContextVar("current_callback", default=None)
 current_web_user = ContextVar("current_web_user", default=None)
+current_ai_reply = ContextVar("current_ai_reply", default=False)
 
 
 class BotErrors(ExceptionHandler):
@@ -33,7 +36,7 @@ class Bot(AsyncTeleBot):
         self.log_queue = Queue()
         self.log_task = None
         self.web = None
-        logger.disabled = True
+        logger.disabled = False
 
     def start_logs(self):
         self.log_task = create_task(self.send_logs())
@@ -43,6 +46,7 @@ class Bot(AsyncTeleBot):
         text = f"{datetime.now():%d.%m.%Y %H:%M:%S}\n{text}"
         text = text.replace(self.token, "[токен бота]")
         text = sub(r"(code=)[A-Za-z0-9_-]+", r"\1[код входа]", text)
+        logging.getLogger("decanat.bot").info(text)
         self.log_queue.put_nowait(text)
 
     @staticmethod
@@ -102,8 +106,7 @@ class Bot(AsyncTeleBot):
 
     def log_callback(self, call):
         self.write_log(
-            f"Нажатие кнопки\nЧат: {call.message.chat.id}\n"
-            f"{self.get_context()}\nДанные кнопки: {call.data}"
+            f"Нажатие кнопки\nЧат: {call.message.chat.id}\n{self.get_context()}\nДанные кнопки: {call.data}"
         )
 
     def log_message(self, action, message):
@@ -111,13 +114,29 @@ class Bot(AsyncTeleBot):
             return
 
         source = message if action == "Пользователь → бот" else None
+        context = source or current_message.get()
+        web = current_web_user.get()
+        document_context = (
+            current_ai_reply.get()
+            or bool(web and web.get("application_type"))
+            or bool(
+                context is not None
+                and context.from_user is not None
+                and (context.chat.id, context.from_user.id) in application_types
+            )
+        )
+        body = (
+            "Содержимое документа не записывается в журнал."
+            if document_context
+            else message.text or message.caption or "Без текста"
+        )
         text = (
             f"{action}\n"
             f"Чат: {message.chat.id}\n"
             f"Сообщение: {message.message_id}\n"
             f"Тип: {message.content_type}\n"
             f"{self.get_context(source)}\n"
-            f"{message.text or message.caption or 'Без текста'}"
+            f"{body}"
         )
 
         if message.photo:
@@ -174,6 +193,11 @@ class Bot(AsyncTeleBot):
 
     async def send_photo(self, chat_id, photo, *args, **kwargs):
         sent = await super().send_photo(chat_id, photo, *args, **kwargs)
+        self.log_message("Бот → чат", sent)
+        return sent
+
+    async def send_document(self, chat_id, document, *args, **kwargs):
+        sent = await super().send_document(chat_id, document, *args, **kwargs)
         self.log_message("Бот → чат", sent)
         return sent
 

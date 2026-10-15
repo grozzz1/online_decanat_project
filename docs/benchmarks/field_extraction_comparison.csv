@@ -1,0 +1,3 @@
+﻿approach,documents,fields,correct,accuracy_percent,missing_values,unknown_visual_fields,missed_present_fields,requested_fields,recovered_fields,recovered_correctly,wrong_proposals,rejected_values,llm_documents,technical_failures,mean_seconds
+regex,30,280,279,99.64285714285714,25,0,0,0,0,0,0,0,0,0,1.9840849000002587
+hybrid,30,280,279,99.64285714285714,25,0,0,25,0,0,0,0,17,0,7.599270483333627

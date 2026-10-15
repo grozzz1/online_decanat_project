@@ -1,17 +1,14 @@
 from telebot.types import InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, ReplyKeyboardMarkup
-from utils.callbacks import reply_data, web_reply_data
 
+from utils.callbacks import reply_data, web_reply_data
+from utils.document_fields import DOCUMENT_SCHEMAS
 
 DEAN_QUESTION = "❔ Задать вопрос деканату"
 SEND_APPLICATION = "📝 Отправить заявление"
 APPLICATION_QUESTION = "🔍 Задать вопрос по заявлению"
 BACK = "⬅ Назад в меню"
-APPLICATIONS = ("Заявление на академический отпуск",)
-APPLICATION_QUESTIONS = (
-    "Справка об обучении",
-    "Заявление на академический отпуск",
-    "Справка о практике",
-)
+APPLICATIONS = tuple(schema["label"] for schema in DOCUMENT_SCHEMAS.values())
+APPLICATION_QUESTIONS = APPLICATIONS
 
 main_menu = ReplyKeyboardMarkup(
     resize_keyboard=True,
@@ -46,10 +43,12 @@ back_menu.add(KeyboardButton(BACK))
 
 def answer_student_menu(token, message):
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(
-        "✉ Ответить студенту",
-        callback_data=reply_data(token, message.chat.id, message.message_id),
-    ))
+    markup.add(
+        InlineKeyboardButton(
+            "✉ Ответить студенту",
+            callback_data=reply_data(token, message.chat.id, message.message_id),
+        )
+    )
     return markup
 
 
@@ -61,8 +60,10 @@ def cancel_reply_menu(user_id):
 
 def answer_web_student_menu(token, request_id):
     markup = InlineKeyboardMarkup()
-    markup.add(InlineKeyboardButton(
-        "✉ Ответить студенту",
-        callback_data=web_reply_data(token, request_id),
-    ))
+    markup.add(
+        InlineKeyboardButton(
+            "✉ Ответить студенту",
+            callback_data=web_reply_data(token, request_id),
+        )
+    )
     return markup

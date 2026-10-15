@@ -2,16 +2,23 @@ from functools import wraps
 from hmac import compare_digest
 from io import BytesIO
 from secrets import token_hex
+
 from flask import Flask, abort, g, jsonify, redirect, render_template, request, send_file, session, url_for
-from PIL import Image, UnidentifiedImageError
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.serving import WSGIRequestHandler, make_server
-from utils.keyboards import APPLICATIONS, APPLICATION_QUESTIONS, APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
+
+from utils.document_fields import DOCUMENT_SCHEMAS, normalize_document_type
+from utils.documents import validate_document
+from utils.keyboards import APPLICATION_QUESTION, DEAN_QUESTION, SEND_APPLICATION
 from utils.users import get_name
+
 from .service import WebService
 
-
-MODES = {"question": DEAN_QUESTION, "application": SEND_APPLICATION, "application_question": APPLICATION_QUESTION}
+MODES = {
+    "question": DEAN_QUESTION,
+    "application": SEND_APPLICATION,
+    "application_question": APPLICATION_QUESTION,
+}
 
 
 def create_app(bot, loop, dean_chat_id):
@@ -47,7 +54,9 @@ def create_app(bot, loop, dean_chat_id):
                 csrf = request.headers.get("X-CSRF-Token", "")
                 origin = request.headers.get("Origin")
 
-                if not compare_digest(csrf.encode(), login["csrf"].encode()) or (origin and origin != request.host_url.rstrip("/")):
+                if not compare_digest(csrf.encode(), login["csrf"].encode()) or (
+                    origin and origin != request.host_url.rstrip("/")
+                ):
                     abort(403)
 
             return view(*args, **kwargs)
@@ -60,11 +69,19 @@ def create_app(bot, loop, dean_chat_id):
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+        )
 
         if response.status_code in (400, 409) and getattr(g, "login", None) is not None:
             details = response.get_json(silent=True) or {}
-            service.call(service.audit(g.login["user_id"], "Ошибка запроса на сайте", f"{request.path}\n{details.get('error', '')}"))
+            service.call(
+                service.audit(
+                    g.login["user_id"],
+                    "Ошибка запроса на сайте",
+                    f"{request.path}\n{details.get('error', '')}",
+                )
+            )
 
         return response
 
@@ -92,14 +109,21 @@ def create_app(bot, loop, dean_chat_id):
     @signed_in
     def index():
         service.call(service.audit(g.login["user_id"], "Открыта страница сайта"))
-        return render_template("index.html", modes=MODES, applications=APPLICATIONS, application_questions=APPLICATION_QUESTIONS)
+        return render_template("index.html", modes=MODES, document_schemas=DOCUMENT_SCHEMAS)
 
     @app.get("/api/session")
     @signed_in
     def session_info():
         user_id = g.login["user_id"]
         user = service.store.get_user(user_id)
-        return jsonify(user={"name": get_name(user), "username": user.username, "photo": service.store.get_avatar(user_id) is not None}, csrf=g.login["csrf"])
+        return jsonify(
+            user={
+                "name": get_name(user),
+                "username": user.username,
+                "photo": service.store.get_avatar(user_id) is not None,
+            },
+            csrf=g.login["csrf"],
+        )
 
     @app.get("/api/profile/photo")
     @signed_in
@@ -148,35 +172,31 @@ def create_app(bot, loop, dean_chat_id):
             if mode == "application":
                 text = ""
 
-            types = APPLICATIONS if mode == "application" else APPLICATION_QUESTIONS
-
-            if application_type not in types:
+            application_type = normalize_document_type(application_type)
+            if application_type is None:
                 return jsonify(error="Выбери тип документа."), 400
 
             uploaded = request.files.get("photo")
 
             if uploaded is None:
-                return jsonify(error="Прикрепи одно фото документа."), 400
+                return jsonify(error="Прикрепи один документ JPG, PNG или PDF."), 400
 
             photo = uploaded.read()
 
             if not photo or len(photo) > 10 * 1024 * 1024:
-                return jsonify(error="Фото должно быть не больше 10 МБ."), 400
+                return jsonify(error="Документ должен быть не больше 10 МБ."), 400
 
             try:
-                with Image.open(BytesIO(photo)) as image:
-                    if image.format not in ("JPEG", "PNG"):
-                        return jsonify(error="Прикрепи фото в формате JPG или PNG."), 400
-
-                    mimetype = Image.MIME[image.format]
-                    image.verify()
-            except (UnidentifiedImageError, OSError, Image.DecompressionBombError, Image.DecompressionBombWarning):
-                return jsonify(error="Не удалось открыть фото. Прикрепи другое изображение."), 400
+                mimetype = validate_document(photo)
+            except ValueError as error:
+                return jsonify(error=str(error)), 400
         else:
             application_type = ""
 
         try:
-            request_id = service.call(service.submit(g.login["user_id"], mode, text, application_type, photo, mimetype))
+            request_id = service.call(
+                service.submit(g.login["user_id"], mode, text, application_type, photo, mimetype)
+            )
         except ValueError as error:
             return jsonify(error=str(error)), 409
 
@@ -191,6 +211,70 @@ def create_app(bot, loop, dean_chat_id):
             abort(404)
 
         return send_file(BytesIO(item["photo"]), mimetype=item["mimetype"])
+
+    @app.post("/api/requests/<request_id>/type")
+    @signed_in
+    def change_request_type(request_id):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error="Укажи тип документа."), 400
+        try:
+            service.call(
+                service.change_type(
+                    g.login["user_id"],
+                    request_id,
+                    data.get("document_type"),
+                    data.get("mode"),
+                    data.get("text", ""),
+                )
+            )
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id)
+
+    @app.post("/api/requests/<request_id>/ask")
+    @signed_in
+    def ask_document(request_id):
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify(error="Напиши вопрос."), 400
+        try:
+            service.call(service.ask_ai(g.login["user_id"], request_id, data.get("question")))
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id), 202
+
+    @app.post("/api/requests/<request_id>/confirm")
+    @signed_in
+    def confirm_request(request_id):
+        data = request.get_json(silent=True) or {}
+        if not isinstance(data, dict) or type(data.get("type_mismatch_confirmed", False)) is not bool:
+            return jsonify(error="Укажи подтверждение типа как true или false."), 400
+        try:
+            service.call(
+                service.confirm(g.login["user_id"], request_id, data.get("type_mismatch_confirmed", False))
+            )
+        except LookupError:
+            abort(404)
+        except ValueError as error:
+            return jsonify(error=str(error)), 409
+        return jsonify(request_id=request_id), 202
+
+    @app.get("/api/requests/<request_id>/pages/<int:page>/photo")
+    @signed_in
+    def request_page(request_id, page):
+        item = service.store.get_request(g.login["user_id"], request_id)
+        if item is None or page < 1:
+            abort(404)
+        if page <= len(item["previews"]):
+            return send_file(BytesIO(item["previews"][page - 1]), mimetype="image/jpeg")
+        if page == 1 and item["photo"] and item["mimetype"] != "application/pdf":
+            return send_file(BytesIO(item["photo"]), mimetype=item["mimetype"])
+        abort(404)
 
     @app.post("/api/logout")
     @signed_in
@@ -208,7 +292,7 @@ def create_app(bot, loop, dean_chat_id):
         text = "Не удалось обработать запрос. Попробуй ещё раз чуть позже."
 
         if isinstance(error, RequestEntityTooLarge):
-            text = "Фото должно быть не больше 10 МБ."
+            text = "Документ должен быть не больше 10 МБ."
         elif status == 403:
             text = "Обнови страницу и попробуй ещё раз."
         elif status == 404:

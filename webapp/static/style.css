@@ -88,7 +88,20 @@ select:focus, textarea:focus, .login-card input:focus { border-color: #75a2f5; b
 .preview-empty svg { width: 55px; height: 62px; margin-bottom: 24px; }
 .preview-empty strong { font-size: 11px; font-weight: 500; color: #94a3b9; margin-bottom: 9px; }
 .preview-empty span { color: #a7b2c3; font-size: 10px; line-height: 1.65; max-width: 180px; }
-#preview-image { max-width: 100%; max-height: 100%; object-fit: contain; padding: 10px; flex-shrink: 0; }
+.preview-stage { position: relative; flex-shrink: 0; line-height: 0; }
+#preview-image { display: block; width: 100%; height: auto; padding: 0; }
+#visual-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.document-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 0 15px 12px; font-size: 11px; color: #586880; }
+.document-tools label { display: flex; align-items: center; gap: 4px; }
+.document-tools select { width: auto; padding: 4px; }
+.document-tools a { color: var(--blue); }
+.visual-results { border-top: 1px solid var(--border); padding: 12px 18px; font-size: 11px; line-height: 1.7; color: #586880; }
+.visual-results ul { margin: 5px 0; padding-left: 18px; }
+.visual-results p { margin: 5px 0; }
+.visual-legend { display: flex; flex-wrap: wrap; gap: 10px; }
+.visual-legend .stamp { color: #16843c; }
+.visual-legend .signature { color: #2465d8; }
+.visual-legend .uncertain { color: #8c6700; }
 .recognition { border-top: 1px solid var(--border); padding: 17px 18px 20px; }
 .recognition-heading { display: flex; align-items: center; justify-content: space-between; gap: 9px; }
 .recognition-heading h3 { font-size: 11px; font-weight: 600; margin: 0; }
@@ -127,6 +140,23 @@ dialog::backdrop { background: #15233bb3; }
 .login-card h1 { margin-top: 10px; }
 .login-card > p { color: #91a0b5; font-size: 12px; line-height: 1.9; margin: 14px 0 28px; }
 .login-card > p strong { font-weight: 600; color: #7186a5; }
+.telegram-bot-link { color: var(--blue); text-decoration: underline; text-decoration-color: #a8c5fa; text-underline-offset: 3px; }
+.telegram-bot-link:hover { color: #2465d8; text-decoration-color: currentColor; }
+.document-type-result { padding: 10px 18px; font-size: 11px; color: #586880; border-top: 1px solid var(--border); }
+.type-notice { margin: 12px 15px; padding: 12px; border: 1px solid #e8c45d; background: #fff8df; color: #775a14; border-radius: 7px; font-size: 12px; line-height: 1.6; }
+.type-notice p { margin: 0 0 9px; }
+.warning-button { display: block; width: 100%; padding: 12px; margin-bottom: 8px; border: 1px solid #c99d28; border-radius: 7px; background: #f4cd61; color: #513c09; font: inherit; font-weight: 600; cursor: pointer; }
+.warning-button:disabled { opacity: .6; cursor: wait; }
+.type-notice .text-button { color: #715315; text-decoration: underline; font-size: 12px; }
+.type-notice.neutral { border-color: #dbe3ee; background: #f3f6fa; color: #586880; }
+.review-actions { padding: 0 15px 15px; font-size: 11px; line-height: 1.6; color: #586880; }
+.review-actions button + button { margin-top: 8px; }
+.field-card, .ai-panel { margin: 12px 15px; font-size: 12px; line-height: 1.6; }
+.field-card summary { cursor: pointer; font-weight: 600; }
+.field-card dt { font-weight: 600; margin-top: 8px; }
+.field-card dd { margin-left: 0; overflow-wrap: anywhere; }
+.ai-panel textarea { display: block; width: 100%; margin: 8px 0; padding: 8px; border: 1px solid #dbe3ee; border-radius: 6px; resize: vertical; font: inherit; }
+#ai-answer { white-space: pre-wrap; overflow-wrap: anywhere; }
 .login-card input { margin-bottom: 14px; }
 .login-footer { display: block; margin-top: 26px; color: #acb7c7; font-size: 10px; line-height: 1.7; }
 @media (min-width: 1500px) {
