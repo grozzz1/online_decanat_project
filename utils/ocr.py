@@ -1,3 +1,4 @@
+import re
 from asyncio import to_thread
 from os import getenv
 from pathlib import Path
@@ -8,7 +9,7 @@ import pytesseract
 from utils.config import get_tesseract_command
 from utils.document_classification import classify_document
 from utils.document_cv import analyze_document_visuals, save_debug_image, summarize_visuals
-from utils.document_fields import empty_extraction, extract_document_fields, normalize_document_type
+from utils.document_fields import ALIASES, empty_extraction, extract_document_fields, normalize_document_type
 from utils.document_policy import preliminary_check
 from utils.document_validation import validate_document_fields, validate_document_visuals
 from utils.documents import load_document_pages, preview_bytes
@@ -52,6 +53,54 @@ def _ocr_words(image):
     return words
 
 
+def _refine_number_ocr(image, text, words):
+    """Re-read a labelled identifier crop; never infer letters from a known prefix."""
+    confusables = {
+        "A": "А",
+        "B": "БВ",
+        "C": "С",
+        "E": "Е",
+        "H": "Н",
+        "K": "К",
+        "M": "М",
+        "O": "О",
+        "P": "Р",
+        "T": "Т",
+        "X": "Х",
+        "Y": "У",
+    }
+    pattern = rf"(?:{ALIASES['document_number']})[ \t]*[:—–-]?[ \t]*(?P<number>[\w./-]+)"
+    replacements = []
+    for match in re.finditer(pattern, text, re.I):
+        original = match["number"]
+        if not re.search(r"[A-Za-z]", original) or not re.search(r"\d", original):
+            continue
+        candidates = [word for word in words if word["text"] == original]
+        if len(candidates) != 1:
+            continue
+        x, y, right, bottom = candidates[0]["bbox"]
+        box = (max(0, x - 10), max(0, y - 10), min(image.width, right + 10), min(image.height, bottom + 10))
+        try:
+            with image.crop(box) as crop:
+                candidate = pytesseract.image_to_string(
+                    crop, lang="rus+eng", config="--psm 7", timeout=20
+                ).strip()
+        except (pytesseract.TesseractError, RuntimeError, OSError):
+            continue
+        if candidate == original or len(candidate) != len(original):
+            continue
+        # Accept only visually confusable alphabet changes confirmed by the crop OCR.
+        # Legitimate Latin identifiers, changed digits and changed punctuation stay untouched.
+        if not all(
+            a == b or b.upper() in confusables.get(a.upper(), "") for a, b in zip(original, candidate)
+        ):
+            continue
+        replacements.append((match.start("number"), match.end("number"), candidate))
+    for start, end, value in reversed(replacements):
+        text = text[:start] + value + text[end:]
+    return text
+
+
 def analyze_document(document, application_type="", debug_dir=None, *, use_ai=True):
     """OCR + CV for image/PDF; preview pages and boxes share the canonical orientation."""
     pytesseract.pytesseract.tesseract_cmd = get_tesseract_command()
@@ -76,13 +125,14 @@ def analyze_document(document, application_type="", debug_dir=None, *, use_ai=Tr
                 text = pytesseract.image_to_string(
                     image, lang="rus+eng", config="--psm 6", timeout=60
                 ).strip()
-                texts.append(text if len(images) == 1 else f"Страница {number}\n{text}")
                 words = []
                 try:
                     words = _ocr_words(image)
                 except (pytesseract.TesseractError, RuntimeError) as error:
                     warnings.append(f"Страница {number}: координаты OCR недоступны ({type(error).__name__}).")
                     processing_errors.append({"stage": "ocr_coordinates", "code": type(error).__name__})
+                text = _refine_number_ocr(image, text, words)
+                texts.append(text if len(images) == 1 else f"Страница {number}\n{text}")
                 metadata = {
                     "page": number,
                     "width": image.width,
