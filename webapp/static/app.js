@@ -1,12 +1,12 @@
 const $ = (id) => document.getElementById(id);
 const navButtons = Array.from(document.querySelectorAll("[data-mode]"));
 const allDocumentTypes = Array.from($("document-type").options, (option) => ({
-    value: option.value, label: option.textContent, applicationVisible: option.dataset.applicationVisible !== "false",
+    value: option.value, label: option.textContent,
 }));
 const descriptions = {
     question: ["Вопрос деканату", "Напиши свой вопрос. Ответ преподавателя появится здесь, в чате."],
     application: ["Отправка заявления", "Выбери тип документа, прикрепи JPG, PNG или PDF и отправь его в деканат."],
-    application_question: ["Вопрос по заявлению", "Выбери документ, прикрепи файл и напиши, что хочешь уточнить."],
+    application_question: ["Вопрос по заявлению", "Прикрепи документ и задай вопрос AI-помощнику. Ответ будет проверен по документу и Положению."],
 };
 let mode = "question";
 let csrf = "";
@@ -28,6 +28,7 @@ let reviewRequestId = null;
 let editingType = false;
 let actionInFlight = false;
 let aiSubmitting = false;
+let messageHistory = [];
 const fieldLabels = {
     student_name: "ФИО студента", university: "Название вуза", program: "Направление подготовки",
     study_form: "Форма обучения", study_start: "Начало обучения", study_end: "Окончание обучения",
@@ -69,14 +70,18 @@ function setBusy(value) {
     $("override-document-type").disabled = value;
     $("override-document-type").textContent = value ? "Отправляем…" : "Подтвердить выбранный тип";
     $("confirm-document").disabled = value || (mismatch && !editingType);
-    $("send-request").textContent = value ? "Отправляем…" : mode === "application" ? "📝 Отправить заявление" : "✉ Отправить вопрос";
+    $("send-request").textContent = value ? "Обрабатываем…" : mode === "application" ? "📝 Отправить заявление" : mode === "application_question" ? "Задать вопрос" : "✉ Отправить вопрос";
 }
 
 function setMode(value, audit = true) {
     if (!descriptions[value]) return;
+    if (mode !== value) {
+        reviewRequestId = null;
+        viewerPinned = false;
+    }
     mode = value;
     const selectedType = $("document-type").value;
-    const types = allDocumentTypes.filter((item) => mode !== "application" || item.applicationVisible);
+    const types = allDocumentTypes;
     $("document-type").replaceChildren(...types.map((item) => new Option(item.label, item.value)));
     $("document-type").value = types.some((item) => item.value === selectedType) ? selectedType : "academic_leave_application";
     sessionStorage.setItem("decanat-mode", mode);
@@ -86,10 +91,12 @@ function setMode(value, audit = true) {
     $("document-type-field").hidden = isQuestion;
     $("upload-field").hidden = isQuestion;
     $("question-field").hidden = mode === "application";
+    $("ai-panel").hidden = mode !== "application_question";
+    $("chat-heading").textContent = mode === "application_question" ? "Вопросы AI-помощнику" : "Чат с деканатом";
     $("question").placeholder = isQuestion ? "Например: когда можно забрать справку об обучении?" : "Например: правильно ли заполнено заявление?";
     $("page-title").textContent = descriptions[mode][0];
     $("page-description").textContent = descriptions[mode][1];
-    $("form-hint").textContent = mode === "application" ? "Документ, распознанный текст и результаты анализа будут переданы в деканат." : "Ответ придёт в этот чат. Можно вернуться на страницу позже.";
+    $("form-hint").textContent = mode === "application_question" ? "Ответит AI-помощник с указанием источников. Документ сохранится для следующих вопросов." : mode === "application" ? "Документ, распознанный текст и результаты анализа будут переданы в деканат." : "Ответ сотрудника придёт в этот чат. Можно вернуться на страницу позже.";
     $("request-tip").textContent = isQuestion ? "Опиши ситуацию и укажи детали, которые помогут деканату ответить." : "Сфотографируй весь документ при хорошем освещении. Текст должен быть чётким.";
     document.querySelector(".chat-step").textContent = isQuestion ? "02" : "03";
     navButtons.forEach((button) => {
@@ -98,6 +105,7 @@ function setMode(value, audit = true) {
         button.setAttribute("aria-pressed", String(active));
     });
     showError("");
+    renderHistory();
     setBusy(busy);
     if (audit) api("/api/action", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode }) }).catch((error) => showError(error.message));
 }
@@ -218,37 +226,60 @@ function showDocument(item) {
     $("ocr-status").textContent = item.status === "processing" ? "В процессе" : item.status === "failed" ? "Ошибка" : "Готово";
     showVisualResults(currentVisuals, item.document_type);
     showTypeReview(item);
+    showFieldResults(item);
     showAIResults(item);
     drawOverlay();
 }
 
-function showAIResults(item) {
+function showFieldResults(item) {
     const extraction = item.extraction;
     $("field-card").hidden = !extraction;
-    $("ai-panel").hidden = !extraction;
     $("field-results").replaceChildren();
-    const origins = { regex: "из текста", qwen: "уточнено AI по цитате", cv: "визуальный анализ", missing: "не найдено", unknown: "не определено" };
+    const statuses = extraction?.field_statuses || {};
     for (const [name, value] of Object.entries(extraction?.fields || {})) {
         const label = document.createElement("dt");
         label.textContent = fieldLabels[name] || name;
         const description = document.createElement("dd");
-        const display = value === null ? "не определено" : typeof value === "boolean" ? value ? "обнаружено" : "не обнаружено" : String(value);
-        description.textContent = `${display} · ${origins[extraction.field_sources?.[name]] || "не определено"}`;
-        const quote = extraction.field_evidence?.[name]?.quote;
-        if (quote) description.textContent += `\nОснование: «${quote}»`;
+        const status = statuses[name];
+        description.textContent = status === "found" ? "Найдено" : status === "missing" ? "Не найдено" : "Не удалось проверить";
+        if (status === "found" && value !== null && typeof value !== "boolean") description.textContent += `: ${value}`;
         $("field-results").append(label, description);
     }
-    const waiting = aiSubmitting || item.ai_status === "processing";
-    $("ask-ai").disabled = waiting || item.status === "processing";
-    $("ask-ai").textContent = waiting ? "Проверяем источники…" : "Получить ответ";
-    $("ai-status").textContent = waiting ? "Готовим ответ по документу и правилам." : item.ai_status === "failed" ? "Не удалось проверить ответ. Попробуй позже." : "";
+    const check = item.preliminary_check;
+    $("validation-result").hidden = !check;
+    if (check) {
+        $("validation-result").dataset.status = check.status;
+        $("validation-title").textContent = check.status === "document_ok" ? "Документ в порядке" : check.status === "unknown" ? "Проверка выполнена не полностью" : "Чего-то не хватает";
+        const labels = (names) => names.map((name) => fieldLabels[name] || name).join(", ");
+        const parts = [];
+        if (check.missing_fields.length) parts.push(`Не найдены обязательные реквизиты: ${labels(check.missing_fields)}.`);
+        if (check.unknown_fields.length) parts.push(`Не удалось проверить: ${labels(check.unknown_fields)}.`);
+        if (check.status === "document_ok") parts.push("Документ содержит все обязательные сведения.");
+        parts.push(`Пункты Положения: ${check.sources.map((source) => source.replace("rule:", "")).join(", ")}.`);
+        parts.push("Это предварительная проверка. Окончательное решение примет сотрудник деканата.");
+        $("validation-summary").textContent = parts.join(" ");
+    }
+}
+
+function showAIResults(item) {
+    $("ai-panel").hidden = mode !== "application_question" || item.mode !== "application_question";
+    $("ai-status").textContent = item.ai_status === "processing" || aiSubmitting ? "Проверяем ответ и источники…" : item.ai_status === "failed" ? "Не удалось получить проверенный ответ. Попробуй ещё раз." : "";
     const result = item.ai_answer?.result;
     $("ai-answer").textContent = result ? result.answer + (result.sources.length ? `\nИсточники: ${result.sources.join(", ")}` : "") : "";
+    if (item.mode === "application_question" && mode === "application_question" && item.status === "checked") {
+        $("upload-title").textContent = item.filename || "Документ сохранён";
+        $("upload-caption").textContent = "Можно задать следующий вопрос без повторной загрузки";
+    }
 }
 
 function showTypeReview(item) {
     const pending = item.status === "needs_review";
     const retry = item.status === "failed" && item.retry_allowed;
+    if ((pending || retry) && reviewRequestId !== item.id) {
+        if (item.mode === "application_question") $("question").value = item.text || "";
+        $("upload-title").textContent = item.filename || "Документ сохранён";
+        $("upload-caption").textContent = "Файл сохранён в обращении";
+    }
     if ((pending || retry) && reviewRequestId !== item.id &&
         Array.from($("document-type").options).some((option) => option.value === item.selected_document_type)) {
         $("document-type").value = item.selected_document_type;
@@ -284,7 +315,7 @@ async function applyStoredType(refresh = true) {
 
 async function confirmStoredDocument(override = false) {
     if (busy || !reviewRequestId) return;
-    if (mode === "application_question" && !$("question").value.trim()) return showError("Напиши вопрос перед отправкой документа.");
+    if (mode === "application_question" && !$("question").value.trim()) return showError("Напиши вопрос по заявлению.");
     const requestId = reviewRequestId;
     actionInFlight = true;
     setBusy(true);
@@ -331,6 +362,7 @@ function clearFile() {
     $("review-actions").hidden = true;
     $("document-title").hidden = true;
     $("field-card").hidden = true;
+    $("validation-result").hidden = true;
     $("ai-panel").hidden = true;
     $("ai-answer").textContent = "";
     $("page-field").hidden = true;
@@ -364,6 +396,8 @@ function chooseFile(file) {
 }
 
 function addMessage(message) {
+    const request = requestsById.get(message.request_id);
+    if (request && request.mode !== mode) return;
     $("chat-empty").hidden = true;
     const container = $("chat-messages");
     const nearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
@@ -371,7 +405,7 @@ function addMessage(message) {
     entry.className = `chat-message ${message.role}`;
     const author = document.createElement("span");
     author.className = "message-author";
-    author.textContent = { student: "Ты", bot: "Онлайн-деканат", dean: "Ответ деканата" }[message.role];
+    author.textContent = { student: "Ты", bot: "Онлайн-деканат", dean: "Ответ деканата", ai: "AI-помощник" }[message.role];
     const body = document.createElement("div");
     body.className = "message-body";
     if (message.photo) {
@@ -397,8 +431,15 @@ function addMessage(message) {
     time.textContent = message.time;
     entry.append(author, body, time);
     container.append(entry);
-    lastMessage = message.id;
     if (nearBottom || message.role === "student") container.scrollTop = container.scrollHeight;
+}
+
+function renderHistory() {
+    $("chat-messages").replaceChildren($("chat-empty"));
+    $("chat-empty").hidden = false;
+    $("chat-empty").querySelector("h3").textContent = mode === "application_question" ? "Задай вопрос по документу" : "Начнём с твоего обращения";
+    $("chat-empty").querySelector("p").textContent = mode === "application_question" ? "Здесь будут вопросы и проверенные ответы AI-помощника." : "Здесь будут твои сообщения и ответы сотрудников деканата.";
+    messageHistory.forEach(addMessage);
 }
 
 async function poll() {
@@ -408,15 +449,17 @@ async function poll() {
     try {
         const result = await api(`/api/messages?after=${lastMessage}`);
         requestsById = new Map(result.requests.map((item) => [item.id, item]));
-        result.messages.forEach(addMessage);
-        const processing = result.requests.some((item) => item.status === "processing");
-        setBusy(processing || actionInFlight);
+        messageHistory.push(...result.messages);
+        if (result.messages.length) lastMessage = result.messages.at(-1).id;
+        if (result.messages.length) renderHistory();
+        const processing = result.requests.some((item) => item.status === "processing" || item.ai_status === "processing");
+        setBusy(processing || actionInFlight || aiSubmitting);
         $("connection-status").textContent = "Чат подключён. Ответы появятся автоматически.";
         $("chat-status").textContent = processing ? "Обрабатываем…" : result.requests.some((item) => item.status === "needs_review") ? "Нужно подтверждение" : "Ответы здесь";
-        const latestDocument = viewerPinned ? requestsById.get(displayedRequest) : [...result.requests].reverse().find((item) => item.mode !== "question");
+        const latestDocument = viewerPinned ? requestsById.get(displayedRequest) : [...result.requests].reverse().find((item) => item.mode === mode && item.mode !== "question");
         if (latestDocument && !selectedFile) showDocument(latestDocument);
         const current = result.requests.find((item) => item.id === activeRequest);
-        if (current && ["sent", "answered", "failed"].includes(current.status) && completedRequest !== current.id) {
+        if (current && ["sent", "answered", "checked", "failed"].includes(current.status) && completedRequest !== current.id) {
             completedRequest = current.id;
             if (current.status === "failed") showError(current.failure_message || "Не удалось отправить документ.");
             else {
@@ -436,21 +479,6 @@ async function poll() {
 }
 
 navButtons.forEach((button) => button.addEventListener("click", () => setMode(button.dataset.mode)));
-$("ask-ai").addEventListener("click", async () => {
-    if (aiSubmitting || !displayedRequest) return;
-    const question = $("ai-question").value.trim();
-    if (!question) return showError("Напиши вопрос AI-помощнику.");
-    aiSubmitting = true;
-    const item = requestsById.get(displayedRequest);
-    if (item) showAIResults(item);
-    try {
-        await api(`/api/requests/${encodeURIComponent(displayedRequest)}/ask`, {
-            method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question }),
-        });
-        showError("");
-    } catch (error) { showError(error.message); }
-    finally { aiSubmitting = false; await poll(); }
-});
 $("document").addEventListener("change", (event) => chooseFile(event.target.files[0]));
 $("remove-file").addEventListener("click", () => {
     clearFile();
@@ -523,8 +551,22 @@ $("request-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (busy) return;
     if (reviewRequestId && mode !== "question" && !selectedFile) return confirmStoredDocument();
-    const text = $("question").value.trim();
+    const text = mode === "application" ? "" : $("question").value.trim();
     if (mode !== "application" && (!text || text.startsWith("/"))) return showError("Напиши вопрос обычным текстом.");
+    const retained = requestsById.get(displayedRequest);
+    if (mode === "application_question" && !selectedFile && retained?.mode === mode && retained.status === "checked") {
+        aiSubmitting = true;
+        setBusy(true);
+        showError("");
+        try {
+            await api(`/api/requests/${encodeURIComponent(retained.id)}/ask`, {
+                method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: text }),
+            });
+            $("question").value = "";
+        } catch (error) { showError(error.message); }
+        finally { aiSubmitting = false; setBusy(false); await poll(); }
+        return;
+    }
     if (mode !== "question" && !selectedFile) return showError("Прикрепи один документ.");
     const data = new FormData();
     data.append("mode", mode);

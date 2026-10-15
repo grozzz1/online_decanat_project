@@ -60,7 +60,7 @@
                             <div class="field" id="document-type-field" hidden>
                                 <label for="document-type">Тип документа</label>
                                 <select id="document-type" name="application_type">
-                                    {% for key, schema in document_schemas.items() %}<option value="{{ key }}" data-application-visible="{{ 'false' if key == 'study_certificate' else 'true' }}"{% if key == 'academic_leave_application' %} selected{% endif %}>{{ schema.label }}</option>{% endfor %}
+                                    {% for key, schema in document_schemas.items() %}<option value="{{ key }}" {% if key == 'academic_leave_application' %} selected{% endif %}>{{ schema.label }}</option>{% endfor %}
                                 </select>
                             </div>
                             <div class="field" id="upload-field" hidden>
@@ -95,15 +95,17 @@
                             <a id="original-document" hidden>Открыть оригинал</a>
                         </div>
                         <div class="visual-results" id="visual-results" aria-live="polite">Анализ печатей и подписей появится после отправки.</div>
-                        <details class="field-card" id="field-card" hidden>
-                            <summary>Извлечённые поля и источники</summary>
+                        <div class="validation-result" id="validation-result" hidden role="status">
+                            <h3 id="validation-title"></h3>
+                            <p id="validation-summary"></p>
+                        </div>
+                        <details class="field-card" id="field-card" open hidden>
+                            <summary>Результат предварительной проверки</summary>
                             <dl id="field-results"></dl>
                         </details>
-                        <div class="ai-panel" id="ai-panel" hidden>
-                            <label for="ai-question">Вопрос AI-помощнику по этому документу</label>
-                            <textarea id="ai-question" rows="2" maxlength="2000" placeholder="Например: какого реквизита не хватает?"></textarea>
-                            <button type="button" class="primary-button" id="ask-ai">Получить ответ</button>
-                            <p id="ai-status" role="status" aria-live="polite"></p>
+                        <div class="ai-panel" id="ai-panel" hidden aria-live="polite">
+                            <h3>Ответ AI-помощника</h3>
+                            <p id="ai-status" role="status"></p>
                             <div id="ai-answer"></div>
                         </div>
                         <div class="document-type-result" id="document-title" hidden></div>

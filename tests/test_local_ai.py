@@ -400,7 +400,7 @@ class AIWebTests(unittest.TestCase):
     upload = integration.WebIntegrationTests.upload
 
     def test_ask_route_owner_csrf_and_background_python_answer(self):
-        response = self.upload(encoded(page()[0]), "document.png")
+        response = self.upload(encoded(page()[0]), "document.png", mode="application_question")
         self.finish_processing()
         request_id = response.json["request_id"]
         url = f"/api/requests/{request_id}/ask"
@@ -417,7 +417,7 @@ class AIWebTests(unittest.TestCase):
         self.assertEqual(item["ai_status"], "done")
         self.assertEqual(item["ai_answer"]["result"]["sources"], ["field:course"])
         self.assertFalse(item["ai_answer"]["diagnostics"]["llm_called"])
-        self.assertEqual(item["status"], "sent")
+        self.assertEqual(item["status"], "checked")
 
     def test_another_user_cannot_ask_about_foreign_document(self):
         from telebot.types import User
@@ -440,7 +440,7 @@ class AIWebTests(unittest.TestCase):
         from asyncio import Event, wait_for
         from threading import Thread
 
-        response = self.upload(encoded(page()[0]), "document.png")
+        response = self.upload(encoded(page()[0]), "document.png", mode="application_question")
         self.finish_processing()
         request_id = response.json["request_id"]
 

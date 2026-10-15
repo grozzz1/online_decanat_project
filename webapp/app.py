@@ -16,8 +16,8 @@ from .service import WebService
 
 MODES = {
     "question": DEAN_QUESTION,
-    "application": SEND_APPLICATION,
-    "application_question": APPLICATION_QUESTION,
+    "application": "📝 Отправить заявление",
+    "application_question": "🔎 Задать вопрос по заявлению",
 }
 
 
@@ -157,6 +157,8 @@ def create_app(bot, loop, dean_chat_id):
     @signed_in
     def submit_request():
         mode = request.form.get("mode", "")
+        if mode == "general_question":
+            mode = "question"
         text = request.form.get("text", "").strip()
         application_type = request.form.get("application_type", "")
         photo = None
@@ -195,7 +197,10 @@ def create_app(bot, loop, dean_chat_id):
 
         try:
             request_id = service.call(
-                service.submit(g.login["user_id"], mode, text, application_type, photo, mimetype)
+                service.submit(
+                    g.login["user_id"], mode, text, application_type, photo, mimetype,
+                    filename=uploaded.filename if mode != "question" else "",
+                )
             )
         except ValueError as error:
             return jsonify(error=str(error)), 409

@@ -49,9 +49,9 @@ def run():
                     wait_status(request_id, status)
                 return request_id
 
-            # A hidden detected type must not be inserted or selected automatically.
+            # Detection must not silently change the student's selection.
             request_id = upload("СПРАВКА ОБ ОБУЧЕНИИ\n" + TEXTS["study_certificate"])
-            assert tab.locator("#document-type option").count() == 2
+            assert tab.locator("#document-type option").count() == 3
             assert tab.locator("#confirm-document").is_disabled()
             assert tab.locator("#send-request").is_disabled()
             assert tab.locator("#apply-document-type").count() == 0
@@ -61,7 +61,7 @@ def run():
             tab.locator("#change-document-type").click()
             assert tab.locator("#type-notice").is_hidden()
             assert tab.locator("#document-type").input_value() == "academic_leave_application"
-            assert tab.locator("#document-type option").count() == 2
+            assert tab.locator("#document-type option").count() == 3
             tab.keyboard.press("Escape")
             assert tab.request.get(f"{base}/api/requests/{request_id}/photo").body() == image
             tab.locator("#confirm-document").click()
@@ -122,6 +122,22 @@ def run():
             tab.locator("#confirm-document").click()
             wait_status(request_id, "sent")
             assert fixture.bot.send_photo.await_count == 6
+            tab.locator('[data-mode="application_question"]').click()
+            assert tab.locator("#question-field").is_visible()
+            assert tab.locator("#ask-ai").count() == 0
+            assert tab.locator(".chat-card").is_visible()
+            tab.locator("#question").fill("Кто принимает окончательное решение?")
+            tab.locator("#document-type").select_option("academic_leave_application")
+            upload(TEXTS["academic_leave_application"], "checked")
+            assert tab.locator("#field-card").is_visible()
+            assert tab.locator("#validation-summary").inner_text()
+            assert fixture.bot.send_photo.await_count == 6
+            tab.locator("#ai-answer").filter(has_text="сотрудник деканата").wait_for()
+            tab.locator("#question").fill("Какой курс указан?")
+            with tab.expect_response(lambda r: r.url.endswith("/ask")) as asked:
+                tab.locator("#send-request").click()
+            assert asked.value.status == 202
+            tab.wait_for_function("() => !busy && document.getElementById('ai-answer').textContent.includes('field:course')")
             assert not errors, errors
             browser.close()
         print(
