@@ -89,7 +89,8 @@ class WebService:
                 request_id, filename=(filename or "document").replace("\\", "/").rsplit("/", 1)[-1][:255]
             )
             body = text if mode == "question" else f"{application_type}\n\n{text}".strip()
-            self.store.add_message(user_id, "student", body, request_id, photo=photo is not None)
+            if mode != "application":
+                self.store.add_message(user_id, "student", body, request_id, photo=photo is not None)
             await self.audit(
                 user_id,
                 "Пользователь → сайт",
@@ -203,7 +204,10 @@ class WebService:
             )
 
             if item["mode"] == "question":
-                await delivery.send_question(self.bot, self.dean_chat_id, user, item["text"], markup, "сайт")
+                message_id = await delivery.send_question(
+                    self.bot, self.dean_chat_id, user, item["text"], markup, "сайт"
+                )
+                item["delivery_progress"].update(message_id=message_id, complete=True)
             else:
                 with BytesIO(item["photo"]) as photo:
                     try:
@@ -244,17 +248,12 @@ class WebService:
                     item = self.store.get_request(user_id, request_id)
                     if not confirmed and item["document_type_matches_selection"] is False:
                         self.store.update_request(request_id, status="needs_review")
-                        self.store.add_message(
-                            user_id,
-                            "bot",
-                            "Документ обработан. Проверь определённый тип и подтверди отправку.",
-                            request_id,
-                        )
                         return
-                    if item["mode"] == "application_question":
-                        self.store.update_request(request_id, status="checked")
-                        await self.answer_ai(user_id, request_id, item["text"])
-                        return
+                    if item["mode"] == "application_question" and not any(
+                        message["request_id"] == request_id and message["role"] == "student"
+                        for message in self.store.storage.messages(user_id)
+                    ):
+                        self.store.add_message(user_id, "student", item["text"], request_id, photo=True)
                     await delivery.send_application(
                         self.bot,
                         self.dean_chat_id,
@@ -272,13 +271,19 @@ class WebService:
                         progress=item["delivery_progress"],
                     )
 
+            self.store.update_request(request_id, delivery_progress=item["delivery_progress"])
+            if item["mode"] == "application_question":
+                self.store.update_request(request_id, status="checked")
             self.store.mark_sent(request_id)
+            if item["mode"] != "application":
+                await self.answer_ai(
+                    user_id, request_id, item["text"], item["delivery_progress"]["message_id"]
+                )
             text = (
                 "Документ отправлен в деканат."
                 if item["mode"] == "application"
                 else "Вопрос отправлен в деканат. Ответ появится здесь, в чате."
             )
-            self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", f"Обращение: {request_id}\n\n{text}")
         except Exception as error:
             progress = item.get("delivery_progress", {})
@@ -303,7 +308,6 @@ class WebService:
                     "Не удалось обработать документ. Проверь файл и настройку OCR перед повторной загрузкой."
                 )
             self.store.update_request(request_id, failure_message=text)
-            self.store.add_message(user_id, "bot", text, request_id)
             await self.audit(user_id, "Бот → сайт", text)
         finally:
             self.store.update_request(request_id, delivery_progress=item.get("delivery_progress", {}))
@@ -320,7 +324,7 @@ class WebService:
         await self.audit(user_id, "Деканат → сайт", f"Обращение: {request_id}\n\n{text}")
 
     async def ask_ai(self, user_id, request_id, text):
-        if not isinstance(text, str) or not text.strip() or len(text) > 4096:
+        if not isinstance(text, str) or not text.strip() or len(text) > 4096 or text.lstrip().startswith("/"):
             raise ValueError("Напиши вопрос длиной до 4096 символов.")
         async with self.locks.setdefault(user_id, Lock()):
             item = self.store.get_request(user_id, request_id)
@@ -328,18 +332,35 @@ class WebService:
                 raise LookupError("Документ не найден.")
             if item["mode"] != "application_question":
                 raise ValueError("AI-вопросы доступны только в разделе «Задать вопрос по заявлению».")
-            if not item.get("extraction") or item["status"] != "checked":
+            if not item.get("extraction") or item["status"] not in ("checked", "answered"):
                 raise ValueError("Дождись обработки и подтверждения типа документа.")
             if item["ai_status"] == "processing":
                 raise ValueError("Дождись ответа AI-помощника.")
             self.store.update_request(request_id, ai_status="processing", ai_answer=None)
             self.store.add_message(user_id, "student", text.strip(), request_id)
-            task = create_task(self.answer_ai(user_id, request_id, text.strip()))
+            task = create_task(self.followup(user_id, request_id, text.strip()))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
             return request_id
 
-    async def answer_ai(self, user_id, request_id, text):
+    async def followup(self, user_id, request_id, text):
+        item = self.store.get_request(user_id, request_id)
+        message_id = item["delivery_progress"].get("message_id")
+        try:
+            message_id = await delivery.send_question(
+                self.bot,
+                self.dean_chat_id,
+                self.store.get_user(user_id),
+                text,
+                answer_web_student_menu(self.bot.token, request_id),
+                "сайт, уточнение по заявлению",
+                reply_to_message_id=message_id,
+            )
+        except Exception as error:
+            self.bot.log_error(error, "Не удалось передать уточнение в деканат")
+        await self.answer_ai(user_id, request_id, text, message_id)
+
+    async def answer_ai(self, user_id, request_id, text, dean_message_id):
         self.store.update_request(request_id, ai_status="processing", ai_answer=None)
         try:
             item = self.store.get_request(user_id, request_id)
@@ -347,13 +368,10 @@ class WebService:
                 {"question_id": request_id + "-question", "question": text}, item["extraction"]
             )
             self.store.update_request(request_id, ai_status="done", ai_answer=answer)
-            self.store.add_message(user_id, "ai", format_answer(answer), request_id)
+            response = format_answer(answer)
         except Exception as error:
             self.store.update_request(request_id, ai_status="failed")
-            self.store.add_message(
-                user_id,
-                "ai",
-                "AI-помощник не смог проверить ответ. Попробуй позже или обратись в деканат.",
-                request_id,
-            )
+            response = "AI-помощник не смог проверить ответ. Вопрос передан в деканат."
             self.bot.write_log("AI question failed: " + type(error).__name__)
+        self.store.add_message(user_id, "ai", response, request_id)
+        await delivery.notify_ai_answer(self.bot, self.dean_chat_id, dean_message_id, response)

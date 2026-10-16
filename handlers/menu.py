@@ -1,3 +1,6 @@
+from html import escape
+from urllib.parse import parse_qs, urlsplit
+
 from utils.keyboards import (
     APPLICATION_QUESTION,
     BACK,
@@ -27,13 +30,16 @@ async def handle_menu(bot, message):
 
         if command == "/start" and getattr(bot, "web", None) is not None:
             link = await bot.web.create_login(message.from_user)
-            text += f"\n\nМожно обратиться и через сайт:\n{link}"
+            code = parse_qs(urlsplit(link).query)["code"][0]
+            text += f"\n\nМожно обратиться и через сайт:\n{escape(link)}"
+            text += f"\n\nКод для входа (нажми, чтобы скопировать):\n<code>{escape(code)}</code>"
 
         await bot.send_message(
             message.chat.id,
             text,
             reply_markup=main_menu,
             disable_web_page_preview=True,
+            parse_mode="HTML",
         )
         if command == "/start" and (markup := miniapp_menu()) is not None:
             await bot.send_message(

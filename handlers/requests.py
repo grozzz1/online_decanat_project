@@ -23,29 +23,35 @@ from utils.validation import has_caption, is_document, is_text
 
 
 async def send_question(bot, message, dean_chat_id):
-    await delivery.send_question(
+    if getattr(type(bot), "archive_message", None) is not None:
+        await bot.archive_message(message, incoming=True)
+    message_id = await delivery.send_question(
         bot,
         dean_chat_id,
         message.from_user,
         message.text,
         answer_student_menu(bot.token, message),
     )
+    await send_ai_answer(bot, message, message.text, None, dean_chat_id, message_id)
 
 
-async def send_ai_answer(bot, message, text, extraction):
-    privacy = current_ai_reply.set(True)
+async def send_ai_answer(bot, message, text, extraction, dean_chat_id, dean_message_id):
     try:
         answer = await answer_question_async(
             {"question_id": str(message.message_id), "question": text}, extraction
         )
-        for part in util.split_string(format_answer(answer), chars_per_string=4096):
-            await bot.reply_to(message, part)
+        response = format_answer(answer)
     except Exception as error:
         if hasattr(bot, "write_log"):
             bot.write_log("AI question failed: " + type(error).__name__)
-        await bot.reply_to(message, "AI-помощник не смог проверить ответ. Обратитесь в деканат.")
+        response = "AI-помощник не смог проверить ответ. Вопрос передан в деканат."
+    privacy = current_ai_reply.set(True)
+    try:
+        for part in util.split_string(response, chars_per_string=4096):
+            await bot.reply_to(message, part)
     finally:
         current_ai_reply.reset(privacy)
+        await delivery.notify_ai_answer(bot, dean_chat_id, dean_message_id, response)
 
 
 async def send_application(bot, message, key, dean_chat_id):
@@ -76,11 +82,10 @@ async def send_application(bot, message, key, dean_chat_id):
         log_document_result(analysis["extraction"], getattr(bot, "write_log", None))
         question = message.caption if states[key] == "application_question" else None
         if question is not None:
-            remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
-            await send_ai_answer(bot, message, question, analysis["extraction"])
-            return
+            if getattr(type(bot), "archive_message", None) is not None:
+                await bot.archive_message(message, incoming=True)
         markup = answer_student_menu(bot.token, message) if question is not None else None
-        await delivery.send_application(
+        message_id = await delivery.send_application(
             bot,
             dean_chat_id,
             message.from_user,
@@ -92,6 +97,8 @@ async def send_application(bot, message, key, dean_chat_id):
             visuals=analysis["visuals"],
             mimetype=mimetype,
         )
+        if question is not None:
+            await send_ai_answer(bot, message, question, analysis["extraction"], dean_chat_id, message_id)
         for part in util.split_string(delivery.visual_summary(analysis["visuals"]), chars_per_string=4096):
             await bot.reply_to(message, part)
         remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
@@ -122,13 +129,7 @@ async def accept_request(bot, message, key, dean_chat_id):
         return
 
     clear_state(key)
-    text = (
-        "Документ отправлен в деканат."
-        if state == "application_photo"
-        else "Вопрос обработан AI-помощником."
-        if state == "application_question"
-        else "Вопрос отправлен в деканат."
-    )
+    text = "Документ отправлен в деканат." if state == "application_photo" else "Вопрос отправлен в деканат."
     await bot.reply_to(message, text, reply_markup=main_menu)
 
 

@@ -177,11 +177,13 @@ class WebStore:
 
     def reply_target(self, request_id):
         item = self.storage.request(request_id)
-        if not item or item["mode"] != "question" or item["status"] == "failed":
+        if not item or item["mode"] not in ("question", "application_question") or item["status"] == "failed":
             return None
         return item["user_id"]
 
     def snapshot(self, user_id, after=0):
+        from utils.keyboards import APPLICATION_QUESTION, BACK, DEAN_QUESTION, SEND_APPLICATION
+
         requests = []
         for item in self.storage.requests(user_id):
             item.pop("user_id", None)
@@ -191,8 +193,24 @@ class WebStore:
             media = self.storage.media_info(item.get("photo_tag"), user_id) if item.get("photo_tag") else None
             item["photo_expired"] = bool(item.get("photo_tag")) and (not media or media["expired"])
             requests.append(item)
+        navigation = {APPLICATION_QUESTION, BACK, DEAN_QUESTION, SEND_APPLICATION}
+        navigation.update(item["label"] for item in self.types.list())
+        modes = {item["id"]: item["mode"] for item in requests}
+        messages = []
+        for message in self.storage.messages(user_id, after):
+            if message["role"] not in ("student", "ai", "dean"):
+                continue
+            if message["role"] == "student":
+                text = message["text"].strip()
+                if not text or text.startswith("/"):
+                    continue
+                if message["source"] == "telegram" and text in navigation:
+                    continue
+                if modes.get(message.get("request_id")) == "application":
+                    continue
+            messages.append(message)
         return {
-            "messages": self.storage.messages(user_id, after),
+            "messages": messages,
             "requests": requests,
             "document_types": self.types.list(),
         }

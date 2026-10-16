@@ -104,8 +104,6 @@ def register_handlers(bot, dean_chat_id):
             token = current_message.set(message)
 
             try:
-                if getattr(type(bot), "archive_message", None) is not None:
-                    await bot.archive_message(message, incoming=True)
                 bot.log_message("Пользователь → бот", message)
                 if await menu.handle_menu(bot, message):
                     return

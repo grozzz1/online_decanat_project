@@ -22,7 +22,9 @@ def run():
     fixture.service.store.add_message(
         123, "student", "Сообщение и фото из Telegram", media_tag=tag, source="telegram"
     )
-    fixture.service.store.add_message(123, "bot", "Ответ бота сохранён", source="telegram")
+    fixture.service.store.add_message(123, "bot", "Выбери пункт меню", source="telegram")
+    fixture.service.store.add_message(123, "student", "/start", source="telegram")
+    fixture.service.store.add_message(123, "ai", "Ответ AI сохранён", source="telegram")
     server = make_server("127.0.0.1", 0, fixture.app, threaded=True, request_handler=WebRequestHandler)
     Thread(target=server.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{server.server_port}"
@@ -35,7 +37,9 @@ def run():
             tab.on("pageerror", lambda error: errors.append(str(error)))
             tab.goto(f"{base}/login?code={code}")
             expect(tab.locator("#chat-messages")).to_contain_text("Сообщение и фото из Telegram")
-            expect(tab.locator("#chat-messages")).to_contain_text("Ответ бота сохранён")
+            expect(tab.locator("#chat-messages")).to_contain_text("Ответ AI сохранён")
+            expect(tab.locator("#chat-messages")).not_to_contain_text("Выбери пункт меню")
+            expect(tab.locator("#chat-messages")).not_to_contain_text("/start")
             tab.locator(".message-photo").click()
             expect(tab.locator("#photo-dialog")).to_be_visible()
             tab.wait_for_function("() => document.getElementById('dialog-photo').naturalWidth === 800")

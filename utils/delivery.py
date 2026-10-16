@@ -5,17 +5,28 @@ from utils.document_logging import format_document_report
 from utils.users import get_username
 
 
-async def send_question(bot, dean_chat_id, user, question, markup, source=""):
+async def send_question(bot, dean_chat_id, user, question, markup, source="", reply_to_message_id=None):
     text = f"Получен вопрос от пользователя {get_username(user)}:\n\n{question.strip()}"
 
     if source:
         text += f"\n\nИсточник: {source}"
 
     parts = util.split_string(text, chars_per_string=4096)
-    first = await bot.send_message(dean_chat_id, parts[0], reply_markup=markup)
+    options = {"reply_to_message_id": reply_to_message_id} if reply_to_message_id is not None else {}
+    first = await bot.send_message(dean_chat_id, parts[0], reply_markup=markup, **options)
 
     for part in parts[1:]:
         await bot.send_message(dean_chat_id, part, reply_to_message_id=first.message_id)
+    return first.message_id
+
+
+async def notify_ai_answer(bot, dean_chat_id, message_id, text):
+    text = f"Ответ AI студенту:\n\n{text}\n\nДеканат может ответить кнопкой «Ответить» в обращении."
+    try:
+        for part in util.split_string(text, chars_per_string=4096):
+            await bot.send_message(dean_chat_id, part, reply_to_message_id=message_id)
+    except Exception as error:
+        bot.log_error(error, "Не удалось уведомить деканат об ответе AI")
 
 
 def visual_summary(visuals):
@@ -114,3 +125,4 @@ async def send_application(
         )
         progress["parts_sent"] = index + 1
     progress["complete"] = True
+    return progress["message_id"]

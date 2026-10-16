@@ -397,9 +397,10 @@ def create_app(bot, loop, dean_chat_id, storage=None):
 
     @app.errorhandler(Exception)
     def handle_error(error):
-        login = service.store.get_session(session.get("login"))
-        service.call(service.report_error(error, login["user_id"] if login is not None else None))
         status = error.code if isinstance(error, HTTPException) else 500
+        if status != 404:
+            login = service.store.get_session(session.get("login"))
+            service.call(service.report_error(error, login["user_id"] if login is not None else None))
         text = "Не удалось обработать запрос. Попробуй ещё раз чуть позже."
 
         if isinstance(error, RequestEntityTooLarge):

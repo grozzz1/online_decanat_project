@@ -100,11 +100,11 @@ function setMode(value, audit = true) {
     $("upload-field").hidden = isQuestion;
     $("question-field").hidden = mode === "application";
     $("ai-panel").hidden = mode !== "application_question";
-    $("chat-heading").textContent = mode === "application_question" ? "Вопросы AI-помощнику" : "Чат с деканатом";
+    $("chat-heading").textContent = "Чат с AI и деканатом";
     $("question").placeholder = isQuestion ? "Например: когда можно забрать справку об обучении?" : "Например: правильно ли заполнено заявление?";
     $("page-title").textContent = descriptions[mode][0];
     $("page-description").textContent = descriptions[mode][1];
-    $("form-hint").textContent = mode === "application_question" ? "Ответит AI-помощник с указанием источников. Документ сохранится для следующих вопросов." : mode === "application" ? "Документ, распознанный текст и результаты анализа будут переданы в деканат." : "Ответ сотрудника придёт в этот чат. Можно вернуться на страницу позже.";
+    $("form-hint").textContent = mode === "application_question" ? "AI проверит вопрос по документу. Деканат получит документ, вопрос и ответ AI и сможет ответить здесь." : mode === "application" ? "Документ и результаты анализа будут переданы в деканат." : "Ответит AI-помощник. Деканат также получит вопрос и сможет ответить в этом чате.";
     $("request-tip").textContent = isQuestion ? "Опиши ситуацию и укажи детали, которые помогут деканату ответить." : "Сфотографируй весь документ при хорошем освещении. Текст должен быть чётким.";
     document.querySelector(".chat-step").textContent = isQuestion ? "02" : "03";
     navButtons.forEach((button) => {
@@ -277,7 +277,7 @@ function showAIResults(item) {
     $("ai-status").textContent = item.ai_status === "processing" || aiSubmitting ? "Проверяем ответ и источники…" : item.ai_status === "failed" ? "Не удалось получить проверенный ответ. Попробуй ещё раз." : "";
     const result = item.ai_answer?.result;
     $("ai-answer").textContent = result ? result.answer + (result.sources.length ? `\nИсточники: ${result.sources.join(", ")}` : "") : "";
-    if (item.mode === "application_question" && mode === "application_question" && item.status === "checked") {
+    if (item.mode === "application_question" && mode === "application_question" && ["checked", "answered"].includes(item.status)) {
         $("upload-title").textContent = item.filename || "Документ сохранён";
         $("upload-caption").textContent = "Можно задать следующий вопрос без повторной загрузки";
     }
@@ -476,7 +476,7 @@ function renderHistory() {
     $("chat-messages").replaceChildren($("chat-empty"));
     $("chat-empty").hidden = false;
     $("chat-empty").querySelector("h3").textContent = mode === "application_question" ? "Задай вопрос по документу" : "Начнём с твоего обращения";
-    $("chat-empty").querySelector("p").textContent = mode === "application_question" ? "Здесь будут вопросы и проверенные ответы AI-помощника." : "Здесь будут твои сообщения и ответы сотрудников деканата.";
+    $("chat-empty").querySelector("p").textContent = "Здесь будут твои вопросы и ответы AI-помощника и сотрудников деканата.";
     messageHistory.forEach(addMessage);
 }
 
@@ -597,7 +597,7 @@ $("request-form").addEventListener("submit", async (event) => {
     const text = mode === "application" ? "" : $("question").value.trim();
     if (mode !== "application" && (!text || text.startsWith("/"))) return showError("Напиши вопрос обычным текстом.");
     const retained = requestsById.get(displayedRequest);
-    if (mode === "application_question" && !selectedFile && retained?.mode === mode && retained.status === "checked") {
+    if (mode === "application_question" && !selectedFile && retained?.mode === mode && ["checked", "answered"].includes(retained.status)) {
         aiSubmitting = true;
         setBusy(true);
         showError("");

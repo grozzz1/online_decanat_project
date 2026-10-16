@@ -17,8 +17,9 @@ class StudentScenariosTests(unittest.TestCase):
     finish_processing = integration.WebIntegrationTests.finish_processing
     upload = integration.WebIntegrationTests.upload
 
-    def test_question_delivered_and_staff_reply_survives_refresh_without_ai(self):
-        with patch("webapp.service.answer_question_async", new_callable=AsyncMock) as ai:
+    def test_question_has_ai_answer_and_staff_reply_survives_refresh(self):
+        answer = {"result": {"answer": "Уточните время в деканате.", "sources": [], "answerable": False}}
+        with patch("webapp.service.answer_question_async", new_callable=AsyncMock, return_value=answer) as ai:
             response = self.client.post(
                 "/api/requests",
                 data={"mode": "question", "text": "Когда приём?"},
@@ -27,9 +28,16 @@ class StudentScenariosTests(unittest.TestCase):
             self.assertEqual(response.status_code, 202)
             self.finish_processing()
             request_id = response.json["request_id"]
-            self.assertEqual(self.bot.send_message.await_args.args[0], -1001)
-            self.assertIn("Когда приём?", self.bot.send_message.await_args.args[1])
-            ai.assert_not_awaited()
+            original, notification = self.bot.send_message.await_args_list
+            self.assertEqual(original.args[0], -1001)
+            self.assertIn("Когда приём?", original.args[1])
+            self.assertIsNotNone(original.kwargs["reply_markup"])
+            self.assertIn("Уточните время", notification.args[1])
+            self.assertEqual(notification.kwargs["reply_to_message_id"], 2)
+            ai.assert_awaited_once_with(
+                {"question_id": request_id + "-question", "question": "Когда приём?"}, None
+            )
+            self.assertEqual(self.client.get("/api/messages").json["messages"][-1]["role"], "ai")
         self.bot.edit_message_text = AsyncMock()
         key = (-1001, 789)
         dean_replies[key] = {"source": "web", "request_id": request_id, "prompt_id": 42}
@@ -72,10 +80,13 @@ class StudentScenariosTests(unittest.TestCase):
             self.assertEqual(item["ai_status"], "done")
             self.assertEqual(item["ai_answer"]["result"]["sources"], ["rule:1.3"])
             self.assertFalse(item["ai_answer"]["diagnostics"]["llm_called"])
-            self.assertIsNone(self.service.store.reply_target(item["id"]))
-            self.bot.send_photo.assert_not_awaited()
+            self.assertEqual(self.service.store.reply_target(item["id"]), 123)
+            self.bot.send_photo.assert_awaited_once()
+            self.assertIsNotNone(self.bot.send_photo.await_args.kwargs["reply_markup"])
             self.bot.send_document.assert_not_awaited()
-            self.bot.send_message.assert_not_awaited()
+            self.assertTrue(
+                any("Ответ AI студенту" in call.args[1] for call in self.bot.send_message.await_args_list)
+            )
             with patch(
                 "webapp.service.analyze_document_async", side_effect=AssertionError("No repeated OCR")
             ):
@@ -90,6 +101,9 @@ class StudentScenariosTests(unittest.TestCase):
             self.assertEqual(retained["photo"], encoded(page()[0]))
             self.assertEqual(retained["ai_answer"]["result"]["sources"], ["field:course"])
             self.assertEqual(self.client.get("/api/messages").json["messages"][-1]["role"], "ai")
+            self.assertTrue(
+                any("Какой курс указан?" in call.args[1] for call in self.bot.send_message.await_args_list)
+            )
 
     def test_document_question_requires_text_and_file(self):
         for data in ({"photo": (BytesIO(encoded(page()[0])), "document.png")}, {"text": "Вопрос"}):
@@ -130,7 +144,7 @@ class StudentScenariosTests(unittest.TestCase):
         self.assertTrue(answer["diagnostics"]["verified"])
         self.assertEqual(answer["result"]["sources"], ["rule:2.1"])
         client.generate.assert_called_once()
-        self.bot.send_photo.assert_not_awaited()
+        self.bot.send_photo.assert_awaited_once()
 
     def test_application_has_preliminary_result_and_cannot_start_ai_chat(self):
         with patch("webapp.service.answer_question_async", new_callable=AsyncMock) as ai:
@@ -158,7 +172,7 @@ class StudentScenariosTests(unittest.TestCase):
 
 
 class TelegramQuestionTests(unittest.IsolatedAsyncioTestCase):
-    async def test_document_question_calls_ai_without_staff_delivery(self):
+    async def test_document_question_calls_ai_and_delivers_document_to_staff(self):
         bot, message = integration.BotIntegrationTests.document_bot(self)
         message.caption = "Кто принимает окончательное решение?"
         key = (message.chat.id, message.from_user.id)
@@ -175,12 +189,13 @@ class TelegramQuestionTests(unittest.IsolatedAsyncioTestCase):
             ):
                 await send_application(bot, message, key, -1001)
                 ai.assert_awaited_once()
-                bot.send_photo.assert_not_awaited()
+                bot.send_photo.assert_awaited_once()
+                self.assertIsNotNone(bot.send_photo.await_args.kwargs["reply_markup"])
                 bot.send_document.assert_not_awaited()
         finally:
             clear_state(key)
 
-    async def test_staff_question_does_not_call_ai(self):
+    async def test_staff_question_also_calls_ai(self):
         bot = SimpleNamespace(token="123:test", send_message=AsyncMock())
         message = SimpleNamespace(
             from_user=SimpleNamespace(id=123, first_name="Student", last_name=None, username=None),
@@ -191,4 +206,4 @@ class TelegramQuestionTests(unittest.IsolatedAsyncioTestCase):
         with patch("handlers.requests.send_ai_answer", new_callable=AsyncMock) as ai:
             await send_question(bot, message, -1001)
             bot.send_message.assert_awaited_once()
-            ai.assert_not_awaited()
+            ai.assert_awaited_once()

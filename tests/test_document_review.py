@@ -152,7 +152,10 @@ class ReviewRouteTests(unittest.TestCase):
             self.assertEqual(response.status_code, 202)
             self.finish_processing()
         self.assertEqual(self.client.get("/api/messages").json["requests"][-1]["status"], "checked")
-        self.bot.send_photo.assert_not_awaited()
+        self.bot.send_photo.assert_awaited_once()
+        history = self.client.get("/api/messages").json["messages"]
+        self.assertEqual(history[0]["role"], "student")
+        self.assertIn("Все ли поля заполнены?", history[0]["text"])
         self.assertEqual(
             self.client.post(
                 f"/api/requests/{request_id}/confirm", headers={"X-CSRF-Token": self.csrf}

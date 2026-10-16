@@ -1,6 +1,7 @@
 from telebot import util
 from telebot.asyncio_helper import ApiException, RequestTimeout
 
+from utils.bot import current_dean_reply
 from utils.callbacks import reply_target, web_reply_target
 from utils.keyboards import cancel_reply_menu
 from utils.states import dean_replies
@@ -102,13 +103,17 @@ async def handle_reply(bot, message):
         if reply.get("source") == "web":
             await bot.web.deliver_reply(reply["request_id"], text)
         else:
-            for part in util.split_string(text, chars_per_string=4096):
-                await bot.send_message(
-                    reply["chat_id"],
-                    part,
-                    reply_to_message_id=reply["message_id"],
-                    allow_sending_without_reply=True,
-                )
+            token = current_dean_reply.set(True)
+            try:
+                for part in util.split_string(text, chars_per_string=4096):
+                    await bot.send_message(
+                        reply["chat_id"],
+                        part,
+                        reply_to_message_id=reply["message_id"],
+                        allow_sending_without_reply=True,
+                    )
+            finally:
+                current_dean_reply.reset(token)
     except (ApiException, RequestTimeout, OSError) as error:
         bot.log_error(error, "Ошибка отправки ответа студенту", message)
         await bot.reply_to(

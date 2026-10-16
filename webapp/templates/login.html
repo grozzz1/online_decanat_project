@@ -14,8 +14,8 @@
         <h1>Привет, студент!</h1>
         <p>Отправь <strong>/start</strong> <a class="telegram-bot-link" href="https://t.me/OnlineDecanatBot">нашему боту в Telegram</a> и открой ссылку из его ответа. Она откроет твой личный кабинет.</p>
         <form method="post" action="{{ url_for('login') }}">
-            <label for="login-code">Или введи код из ссылки</label>
-            <input id="login-code" name="code" type="text" autocomplete="off" placeholder="Код после code=" required>
+            <label for="login-code">Или введи код из бота</label>
+            <input id="login-code" name="code" type="text" autocomplete="off" placeholder="Код" required>
             {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
             <button class="primary-button" type="submit">Войти через Telegram</button>
         </form>

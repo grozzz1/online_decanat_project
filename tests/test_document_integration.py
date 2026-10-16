@@ -240,6 +240,7 @@ class BotIntegrationTests(unittest.IsolatedAsyncioTestCase):
             reply_to=AsyncMock(),
         )
         message = SimpleNamespace(
+            message_id=5,
             photo=None,
             document=SimpleNamespace(
                 file_id="test", file_size=len(data), mime_type="image/png", file_name="document.png"

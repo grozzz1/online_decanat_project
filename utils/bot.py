@@ -18,6 +18,7 @@ current_message: ContextVar[Message | None] = ContextVar("current_message", defa
 current_callback: ContextVar[CallbackQuery | None] = ContextVar("current_callback", default=None)
 current_web_user = ContextVar("current_web_user", default=None)
 current_ai_reply = ContextVar("current_ai_reply", default=False)
+current_dean_reply = ContextVar("current_dean_reply", default=False)
 
 
 class BotErrors(ExceptionHandler):
@@ -46,6 +47,7 @@ class Bot(AsyncTeleBot):
         text = f"{datetime.now():%d.%m.%Y %H:%M:%S}\n{text}"
         text = text.replace(self.token, "[токен бота]")
         text = sub(r"(code=)[A-Za-z0-9_-]+", r"\1[код входа]", text)
+        text = sub(r"(<code>)[A-Za-z0-9_-]{24,}(</code>)", r"\1[код входа]\2", text)
         logging.getLogger("decanat.bot").info(text)
         self.log_queue.put_nowait(text)
 
@@ -130,6 +132,9 @@ class Bot(AsyncTeleBot):
             if document_context
             else message.text or message.caption or "Без текста"
         )
+        if action != "Пользователь → бот" and context is not None and (context.text or "").strip():
+            if context.text.split(maxsplit=1)[0].split("@", 1)[0] == "/start":
+                body = "Отправлены меню и данные для входа на сайт."
         text = (
             f"{action}\n"
             f"Чат: {message.chat.id}\n"
@@ -227,9 +232,6 @@ class Bot(AsyncTeleBot):
             or message.chat.id in (self.admin_log_chat_id, self.web.dean_chat_id)
         ):
             return
-        user_id = message.from_user.id if incoming else message.chat.id
-        if incoming:
-            store.register_user(message.from_user)
         text = message.text or message.caption or ""
         role = (
             "student"
@@ -237,9 +239,16 @@ class Bot(AsyncTeleBot):
             else "ai"
             if current_ai_reply.get()
             else "dean"
-            if text.startswith("Ответ деканата\n")
+            if current_dean_reply.get() or text.startswith("Ответ деканата\n")
             else "bot"
         )
+        if role == "bot":
+            return
+        if incoming and (not text.strip() or text.lstrip().startswith("/")):
+            return
+        user_id = message.from_user.id if incoming else message.chat.id
+        if incoming:
+            store.register_user(message.from_user)
         media_tag = None
         attachment = message.photo[-1] if message.photo else message.document
         if attachment:

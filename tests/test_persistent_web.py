@@ -72,7 +72,9 @@ class PersistentWebTests(unittest.TestCase):
         fixture = self.fixture
         storage = fixture.service.store.storage
         storage.media_limit = 2
-        request_id = fixture.upload(encoded(page()[0]), "old.png").json["request_id"]
+        request_id = fixture.upload(encoded(page()[0]), "old.png", mode="application_question").json[
+            "request_id"
+        ]
         fixture.finish_processing()
         message_id = fixture.client.get("/api/messages").json["messages"][0]["id"]
         storage.save_media(456, b"second", "image/png")
@@ -91,7 +93,7 @@ class PersistentWebTests(unittest.TestCase):
 
     def test_other_student_cannot_fetch_attachment(self):
         fixture = self.fixture
-        fixture.upload(encoded(page()[0]), "private.png")
+        fixture.upload(encoded(page()[0]), "private.png", mode="application_question")
         fixture.finish_processing()
         message_id = fixture.client.get("/api/messages").json["messages"][0]["id"]
         client = fixture.app.test_client()
