@@ -4,12 +4,14 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>Вход в онлайн-деканат</title>
+    <link rel="icon" href="{{ url_for('static', filename='mlioneri.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
     <script src="{{ url_for('static', filename='miniapp.js') }}" defer></script>
 </head>
 <body class="login-page">
     <main class="login-card">
+        <img class="login-icon" src="{{ url_for('static', filename='mlioneri.png') }}" alt="Логотип Онлайн-деканата" width="112" height="112">
         <h1>Онлайн-деканат</h1>
         <p id="miniapp-status" role="status">Входим через Telegram…</p>
         <a href="{{ url_for('login') }}">Войти по ссылке из бота</a>

@@ -5,7 +5,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 FILES = ("main.py", "requirements.txt", ".env.example", "rules.md", "README.md", "docs/SERVER.md")
 DIRECTORIES = ("handlers", "utils", "webapp", "scripts", "deploy")
-SUFFIXES = {".py", ".sh", ".html", ".css", ".js", ".svg"}
+SUFFIXES = {".py", ".sh", ".html", ".css", ".js", ".svg", ".png"}
 
 
 def package(target):

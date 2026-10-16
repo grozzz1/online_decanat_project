@@ -4,12 +4,12 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Вход — Онлайн-деканат</title>
-    <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
+    <link rel="icon" href="{{ url_for('static', filename='mlioneri.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body class="login-page">
     <main class="login-card">
-        <span class="login-icon"><svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M7 3h7l4 4v14H7V3Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M14 3v5h4M10 12h5m-5 4h5" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span>
+        <img class="login-icon" src="{{ url_for('static', filename='mlioneri.png') }}" alt="Логотип Онлайн-деканата" width="112" height="112">
         <span class="eyebrow">ОНЛАЙН-ДЕКАНАТ</span>
         <h1>Привет, студент!</h1>
         <p>Отправь <strong>/start</strong> <a class="telegram-bot-link" href="https://t.me/OnlineDecanatBot">нашему боту в Telegram</a> и открой ссылку из его ответа. Она откроет твой личный кабинет.</p>
