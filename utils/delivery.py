@@ -70,6 +70,7 @@ async def send_application(
     visuals=None,
     mimetype="image/jpeg",
     progress=None,
+    file_id=None,
 ):
 
     progress = progress if progress is not None else {}
@@ -99,21 +100,26 @@ async def send_application(
         text += "\n\nОсновные поля документа не удалось распознать."
     if visuals:
         text += f"\n\n{visual_summary(visuals)}"
-    photo.seek(0)
+    attachment = file_id or photo
+    if not file_id:
+        photo.seek(0)
     if "message_id" not in progress:
         if mimetype == "application/pdf":
             sent = await acknowledged(
                 lambda: bot.send_document(
                     dean_chat_id,
-                    photo,
+                    attachment,
                     visible_file_name="document.pdf",
                     caption=text[:1024],
                     reply_markup=markup,
+                    timeout=30,
                 )
             )
         else:
             sent = await acknowledged(
-                lambda: bot.send_photo(dean_chat_id, photo, caption=text[:1024], reply_markup=markup)
+                lambda: bot.send_photo(
+                    dean_chat_id, attachment, caption=text[:1024], reply_markup=markup, timeout=30
+                )
             )
         progress["message_id"] = sent.message_id
 

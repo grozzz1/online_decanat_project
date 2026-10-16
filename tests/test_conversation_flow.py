@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -131,6 +132,7 @@ class ConversationTelegramTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch("handlers.requests.send_question", new_callable=AsyncMock):
                 await receive(telegram_message("Когда приём?"))
+                await asyncio.gather(*bot.request_tasks.values())
         finally:
             clear_state((123, 123))
 
@@ -148,7 +150,7 @@ class ConversationTelegramTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(original.kwargs["reply_markup"])
         self.assertEqual(notification.kwargs["reply_to_message_id"], 42)
         self.assertIn("AI-помощник не смог", notification.args[1])
-        self.assertIn("Вопрос передан в деканат", bot.reply_to.await_args.args[1])
+        self.assertIn("Обратись в деканат", bot.reply_to.await_args.args[1])
 
     async def test_start_code_is_not_copied_into_logs(self):
         bot = Bot("123:test", -999)

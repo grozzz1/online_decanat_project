@@ -30,7 +30,9 @@ async def main() -> None:
     finally:
         if server is not None:
             await asyncio.to_thread(server.close)
-        tasks = list(bot.web.tasks) if bot.web is not None else []
+        tasks = list(bot.request_tasks.values())
+        if bot.web is not None:
+            tasks.extend(bot.web.tasks)
         if bot.log_task is not None:
             tasks.append(bot.log_task)
         for task in tasks:

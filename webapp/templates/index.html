@@ -6,8 +6,8 @@
     <title>Онлайн-деканат</title>
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    {% if telegram_mini_app %}<script src="https://telegram.org/js/telegram-web-app.js" defer></script>{% endif %}
     <script src="{{ url_for('static', filename='app.js') }}" defer></script>
-    {% if telegram_mini_app %}<script src="https://telegram.org/js/telegram-web-app.js"></script>{% endif %}
 </head>
 <body>
     <div class="app-shell">

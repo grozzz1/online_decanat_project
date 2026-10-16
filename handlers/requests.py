@@ -1,11 +1,12 @@
+from asyncio import Task, create_task, to_thread
 from io import BytesIO
 
 from telebot import util
-from telebot.asyncio_helper import ApiException, RequestTimeout
 
 from utils import delivery
-from utils.bot import current_ai_reply
+from utils.bot import current_ai_reply, current_document
 from utils.document_context import remember_document
+from utils.document_feedback import document_feedback
 from utils.document_fields import document_label, normalize_document_type
 from utils.document_logging import log_document_failure, log_document_result
 from utils.documents import MAX_BYTES, validate_document
@@ -25,14 +26,34 @@ from utils.validation import has_caption, is_document, is_text
 async def send_question(bot, message, dean_chat_id):
     if getattr(type(bot), "archive_message", None) is not None:
         await bot.archive_message(message, incoming=True)
-    message_id = await delivery.send_question(
-        bot,
-        dean_chat_id,
-        message.from_user,
-        message.text,
-        answer_student_menu(bot.token, message),
+    task = create_task(
+        deliver_to_dean(
+            bot,
+            message,
+            delivery.send_question(
+                bot, dean_chat_id, message.from_user, message.text, answer_student_menu(bot.token, message)
+            ),
+        )
     )
-    await send_ai_answer(bot, message, message.text, None, dean_chat_id, message_id)
+    try:
+        await send_ai_answer(bot, message, message.text, None, dean_chat_id, task)
+    finally:
+        message_id = await task
+    return message_id is not None
+
+
+async def deliver_to_dean(bot, message, operation):
+    try:
+        return await operation
+    except Exception as error:
+        bot.log_error(error, "Не удалось подтвердить доставку обращения в деканат", message)
+        await bot.reply_to(
+            message,
+            "Не удалось подтвердить доставку обращения в деканат. Результат проверки доступен здесь. "
+            "Перед повторной отправкой уточни, получено ли обращение сотрудниками.",
+            reply_markup=main_menu,
+        )
+        return None
 
 
 async def send_ai_answer(bot, message, text, extraction, dean_chat_id, dean_message_id):
@@ -44,93 +65,143 @@ async def send_ai_answer(bot, message, text, extraction, dean_chat_id, dean_mess
     except Exception as error:
         if hasattr(bot, "write_log"):
             bot.write_log("AI question failed: " + type(error).__name__)
-        response = "AI-помощник не смог проверить ответ. Вопрос передан в деканат."
+        response = "AI-помощник не смог проверить ответ. Обратись в деканат."
     privacy = current_ai_reply.set(True)
     try:
         for part in util.split_string(response, chars_per_string=4096):
             await bot.reply_to(message, part)
     finally:
         current_ai_reply.reset(privacy)
-        await delivery.notify_ai_answer(bot, dean_chat_id, dean_message_id, response)
+        if isinstance(dean_message_id, Task):
+            dean_message_id = await dean_message_id
+        if dean_message_id is not None:
+            await delivery.notify_ai_answer(bot, dean_chat_id, dean_message_id, response)
 
 
-async def send_application(bot, message, key, dean_chat_id):
+async def send_application(bot, message, key, dean_chat_id, *, selection=None):
+    state, application_type = selection or (states[key], application_types[key])
     attachment = message.photo[-1] if message.photo else message.document
     if attachment.file_size and attachment.file_size > MAX_BYTES:
         raise ValueError("Документ должен быть не больше 10 МБ.")
-    file = await bot.get_file(attachment.file_id)
-    mode = "application_question" if states[key] == "application_question" else "application"
+    mode = "application_question" if state == "application_question" else "application"
     selected = next(
         (
             item
             for item in available_document_types(bot, mode)
-            if application_types[key] in (item["label"], item["key"])
-            or item["key"] == normalize_document_type(application_types[key])
+            if application_type in (item["label"], item["key"])
+            or item["key"] == normalize_document_type(application_type)
         ),
         None,
     )
     if selected is None:
         raise ValueError("Этот тип документа удалён. Вернись в меню и выбери другой.")
 
+    file = await bot.get_file(attachment.file_id)
     with BytesIO(await bot.download_file(file.file_path)) as photo:
-        mimetype = validate_document(photo.getvalue())
+        mimetype = await to_thread(validate_document, photo.getvalue())
         try:
             analysis = await analyze_document_async(photo, selected["key"])
         except Exception as error:
-            log_document_failure(application_types[key], error, getattr(bot, "write_log", None))
+            log_document_failure(application_type, error, getattr(bot, "write_log", None))
             raise
         log_document_result(analysis["extraction"], getattr(bot, "write_log", None))
-        question = message.caption if states[key] == "application_question" else None
+        for part in util.split_string(document_feedback(analysis), chars_per_string=4096):
+            await bot.reply_to(message, part)
+        for part in util.split_string(delivery.visual_summary(analysis["visuals"]), chars_per_string=4096):
+            await bot.reply_to(message, part)
+        question = message.caption if state == "application_question" else None
         if question is not None:
             if getattr(type(bot), "archive_message", None) is not None:
                 await bot.archive_message(message, incoming=True)
         markup = answer_student_menu(bot.token, message) if question is not None else None
-        message_id = await delivery.send_application(
-            bot,
-            dean_chat_id,
-            message.from_user,
-            photo,
-            selected["label"] if selected["custom"] else document_label(analysis["document_type"]),
-            analysis["extraction"],
-            question,
-            markup,
-            visuals=analysis["visuals"],
-            mimetype=mimetype,
+        task = create_task(
+            deliver_to_dean(
+                bot,
+                message,
+                delivery.send_application(
+                    bot,
+                    dean_chat_id,
+                    message.from_user,
+                    photo,
+                    selected["label"] if selected["custom"] else document_label(analysis["document_type"]),
+                    analysis["extraction"],
+                    question,
+                    markup,
+                    visuals=analysis["visuals"],
+                    mimetype=mimetype,
+                    file_id=attachment.file_id,
+                ),
+            )
         )
-        if question is not None:
-            await send_ai_answer(bot, message, question, analysis["extraction"], dean_chat_id, message_id)
-        for part in util.split_string(delivery.visual_summary(analysis["visuals"]), chars_per_string=4096):
-            await bot.reply_to(message, part)
-        remember_document((message.chat.id, message.from_user.id), analysis["extraction"])
+        try:
+            if question is not None:
+                await send_ai_answer(bot, message, question, analysis["extraction"], dean_chat_id, task)
+        finally:
+            message_id = await task
+        remember_document(key, analysis["extraction"])
+        return message_id is not None
 
 
-async def accept_request(bot, message, key, dean_chat_id):
-    state = states[key]
+async def accept_request(bot, message, key, dean_chat_id, *, selection=None):
+    state, application_type = selection or (states[key], application_types.get(key))
+    token = current_document.set(application_type)
+    retry_menu = main_menu if selection is not None else back_menu
 
     try:
         if state == "dean_question":
-            await send_question(bot, message, dean_chat_id)
+            delivered = await send_question(bot, message, dean_chat_id)
         else:
-            await send_application(bot, message, key, dean_chat_id)
+            delivered = await send_application(
+                bot, message, key, dean_chat_id, selection=(state, application_type)
+            )
     except ValueError as error:
         if state != "dean_question":
-            log_document_failure(
-                application_types[key], error, getattr(bot, "write_log", None), stage="input"
-            )
-        await bot.reply_to(message, str(error), reply_markup=back_menu)
+            log_document_failure(application_type, error, getattr(bot, "write_log", None), stage="input")
+        await bot.reply_to(message, str(error), reply_markup=retry_menu)
         return
-    except (ApiException, RequestTimeout, OSError, RuntimeError) as error:
+    except Exception as error:
         bot.log_error(error, "Ошибка отправки обращения", message)
         await bot.reply_to(
             message,
             "Не удалось отправить обращение. Попробуй ещё раз чуть позже:",
-            reply_markup=back_menu,
+            reply_markup=retry_menu,
         )
         return
+    finally:
+        current_document.reset(token)
 
-    clear_state(key)
+    if delivered is False:
+        return
+    if selection is None:
+        clear_state(key)
     text = "Документ отправлен в деканат." if state == "application_photo" else "Вопрос отправлен в деканат."
     await bot.reply_to(message, text, reply_markup=main_menu)
+
+
+async def begin_request(bot, message, key, dean_chat_id):
+    tasks = getattr(bot, "request_tasks", None)
+    if tasks is None:
+        tasks = bot.request_tasks = {}
+    if key in tasks:
+        await bot.reply_to(message, "Предыдущее обращение ещё обрабатывается. Результат придёт сюда.")
+        return
+    selection = (states[key], application_types.get(key))
+    await bot.reply_to(
+        message,
+        "Обращение принято в обработку. Результат придёт сюда; пока можно пользоваться меню.",
+        reply_markup=main_menu,
+    )
+    clear_state(key)
+    task = create_task(accept_request(bot, message, key, dean_chat_id, selection=selection))
+    tasks[key] = task
+
+    def finish(completed):
+        if tasks.get(key) is completed:
+            tasks.pop(key)
+        if not completed.cancelled() and completed.exception() is not None:
+            bot.log_error(completed.exception(), "Ошибка фоновой обработки обращения", message)
+
+    task.add_done_callback(finish)
 
 
 async def handle_request(bot, message, dean_chat_id):
@@ -139,7 +210,7 @@ async def handle_request(bot, message, dean_chat_id):
 
     if state == "dean_question":
         if is_text(message) and not message.text.lstrip().startswith("/"):
-            await accept_request(bot, message, key, dean_chat_id)
+            await begin_request(bot, message, key, dean_chat_id)
             return
 
         await bot.reply_to(
@@ -161,7 +232,7 @@ async def handle_request(bot, message, dean_chat_id):
         )
     elif state == "application_photo":
         if is_document(message):
-            await accept_request(bot, message, key, dean_chat_id)
+            await begin_request(bot, message, key, dean_chat_id)
             return
 
         await bot.reply_to(
@@ -171,7 +242,7 @@ async def handle_request(bot, message, dean_chat_id):
         )
     elif state == "application_question":
         if is_document(message) and has_caption(message):
-            await accept_request(bot, message, key, dean_chat_id)
+            await begin_request(bot, message, key, dean_chat_id)
             return
 
         await bot.reply_to(

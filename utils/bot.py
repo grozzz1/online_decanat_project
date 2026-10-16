@@ -19,6 +19,7 @@ current_callback: ContextVar[CallbackQuery | None] = ContextVar("current_callbac
 current_web_user = ContextVar("current_web_user", default=None)
 current_ai_reply = ContextVar("current_ai_reply", default=False)
 current_dean_reply = ContextVar("current_dean_reply", default=False)
+current_document = ContextVar("current_document", default=None)
 
 
 class BotErrors(ExceptionHandler):
@@ -37,6 +38,7 @@ class Bot(AsyncTeleBot):
         self.log_queue = Queue()
         self.log_task = None
         self.web = None
+        self.request_tasks = {}
         logger.disabled = False
 
     def start_logs(self):
@@ -101,8 +103,9 @@ class Bot(AsyncTeleBot):
             if dean_replies[key].get("source") == "web":
                 text += f"Источник обращения: сайт\nОбращение: {dean_replies[key]['request_id']}\n"
 
-        if key in application_types:
-            text += f"Документ: {application_types[key]}\n"
+        document = current_document.get() or application_types.get(key)
+        if document:
+            text += f"Документ: {document}\n"
 
         return text
 
@@ -120,6 +123,7 @@ class Bot(AsyncTeleBot):
         web = current_web_user.get()
         document_context = (
             current_ai_reply.get()
+            or bool(current_document.get())
             or bool(web and web.get("application_type"))
             or bool(
                 context is not None
@@ -265,12 +269,13 @@ class Bot(AsyncTeleBot):
                     if len(data) <= 20 * 1024 * 1024:
                         from utils.documents import validate_document
 
-                        mimetype = validate_document(data)
+                        mimetype = await to_thread(validate_document, data)
                         media_tag = await to_thread(store.storage.save_media, user_id, data, mimetype)
                 except Exception as error:
                     self.log_error(error, "Не удалось сохранить вложение переписки")
                     text += "\nВложение недоступно для сохранения."
-        store.add_message(
+        await to_thread(
+            store.add_message,
             user_id,
             role,
             text,
